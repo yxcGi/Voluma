@@ -26,3 +26,7 @@ Geometry_Source_Code.md
 *solution*.dat
 
 
+
+# 算例输出
+cases/*/output/
+*.log

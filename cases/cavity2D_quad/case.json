@@ -1,0 +1,15 @@
+// 方腔（Gmsh 四边形网格），顶盖 U = 50，ν = 0.01，Re = 5000（原 cavity2d_structured 算例）
+{
+  "mesh": { "polyMesh": "../../meshes/cavity2D_4/polyMesh" },
+  "physics": { "nu": 0.01, "steady": true },
+  "boundary": {
+    "topWalls":    { "U": {"type": "fixedValue", "value": [50, 0, 0]}, "p": {"type": "zeroGradient"} },
+    "leftWalls":   { "U": {"type": "noSlip"}, "p": {"type": "zeroGradient"} },
+    "rightWalls":  { "U": {"type": "noSlip"}, "p": {"type": "zeroGradient"} },
+    "bottomWalls": { "U": {"type": "noSlip"}, "p": {"type": "zeroGradient"} }
+  },
+  "schemes": { "div": "linearUpwind" },  // 用 MUSCL 时 SIMPLE 残差会停在 1e-4 左右（限制器反复切换）
+  "solution": { "alphaU": 0.7, "alphaP": 0.3, "nNonOrthCorr": 1 },
+  "run": { "maxIter": 50000, "residualTol": 1e-6, "output": "output", "printInterval": 500 },
+  "lines": [ { "name": "xMid", "start": [0.5, 0, 0.005], "end": [0.5, 1, 0.005], "n": 101 } ]
+}

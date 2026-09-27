@@ -1,0 +1,15 @@
+// 带内热源的稳态导热（原 heat_source 算例）：Γ = 20，Q = 10000，
+// 左、右、下壁 T = 0，顶部绝热
+{
+  "mesh": { "polyMesh": "../../meshes/cavity/polyMesh" },
+  "physics": { "field": "T", "diffusivity": 20, "source": 10000, "steady": true },
+  "boundary": {
+    "movingWall":  { "T": {"type": "zeroGradient"} },
+    "leftWalls":   { "T": {"type": "fixedValue", "value": 0} },
+    "rightWalls":  { "T": {"type": "fixedValue", "value": 0} },
+    "bottomWalls": { "T": {"type": "fixedValue", "value": 0} }
+  },
+  "initial": { "T": 500 },
+  "solution": { "T": {"solver": "PCG", "preconditioner": "GAMG"} },
+  "run": { "maxIter": 20, "residualTol": 1e-10, "output": "output", "tecplot": true }
+}

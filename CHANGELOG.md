@@ -1,5 +1,23 @@
 # Changelog
 
+## v1.0.0-alpha - 新框架（第一阶段：基础平台）
+
+整体重写为通用有限体积平台，旧 API（`src/core`、`example/`）移除，全部旧算例迁移到 `cases/`。
+
+### 新增
+
+- 不可压流动 `IncompressibleFlow`：稳态 SIMPLE 与瞬态 PIMPLE/PISO；Euler / backward（变步长）时间格式；
+  恒定体力与平均流速保持驱动；湍流模型接口（ν_t、壁面有效粘度）。
+- 标量输运 `ScalarTransport`：对流、扩散、源项，稳态 / 瞬态。
+- 周期（cyclic）边界、对称 / 滑移边界；Robin 边界保留。
+- 对流格式 linear、linearUpwind、LUST、vanLeer、MUSCL、minmod、limitedLinear；最小二乘梯度；非正交修正。
+- 线性求解器 PCG、PBiCGStab、Gauss-Seidel；GAMG、DIC/DILU 预条件（压力方程默认 GAMG）。
+- JSON 算例文件驱动的 `fvmFlow`、`fvmScalar`（见 docs/case-format.md）。
+- VTK（ParaView）输出、Tecplot 输出、探针、沿线采样、与进程数无关的续算文件。
+- 可复现模式 `CFD_REPRODUCIBLE=1`：任意进程数结果逐位相同。
+- ctest 精度测试（Poisson、对流扩散、Robin、网格）。
+
+
 ## v0.2.0 - MPI parallel solver
 
 ### Added

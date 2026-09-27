@@ -1,44 +1,49 @@
-cmake_minimum_required(VERSION 3.15)
-
-get_filename_component(PRJ_NAME ${CMAKE_SOURCE_DIR} NAME)
-
-project(${PRJ_NAME}
-    VERSION 0.1.0
-    DESCRIPTION "A lightweight finite volume method CFD solver"
-    LANGUAGES CXX
-    HOMEPAGE_URL "https://github.com/yxcGi/CFD_FVM_Solver"
-)
+cmake_minimum_required(VERSION 3.16)
+project(Voluma LANGUAGES CXX VERSION 1.0.0)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+if(NOT CMAKE_BUILD_TYPE)
+  set(CMAKE_BUILD_TYPE Release)
+endif()
+set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG")
+add_compile_options(-Wall -Wextra -ffp-contract=off)
 
-if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-    add_compile_options(-g -O0 -Wall -Wextra -pedantic)
-else()
-    add_compile_options(-O3 -DNDEBUG)
+option(FVM_USE_MPI "Build with MPI" ON)
+if(FVM_USE_MPI)
+  find_package(MPI COMPONENTS CXX)
+  if(NOT MPI_CXX_FOUND)
+    message(WARNING "MPI not found, building serial version")
+    set(FVM_USE_MPI OFF)
+  endif()
 endif()
 
-# 禁止编译器把 a*b+c 融合为 FMA：保证不同进程数、不同编译选项下的浮点结果一致
-add_compile_options(-ffp-contract=off)
-
-# ---------------- MPI ----------------
-# 默认启用 MPI；找不到 MPI 或 -DCFD_USE_MPI=OFF 时编译为单进程版本（与原串行程序一致）
-option(CFD_USE_MPI "Build the MPI parallel solver" ON)
-if(CFD_USE_MPI)
-    find_package(MPI COMPONENTS CXX)
-    if(MPI_CXX_FOUND)
-        message(STATUS "MPI found: ${MPI_CXX_COMPILER} (parallel build)")
-    else()
-        message(WARNING "MPI not found, building the single-process version")
-        set(CFD_USE_MPI OFF)
-    endif()
+file(GLOB_RECURSE FVM_SOURCES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/src/fvm/*.cpp)
+add_library(fvm STATIC ${FVM_SOURCES})
+target_include_directories(fvm PUBLIC ${CMAKE_SOURCE_DIR}/src)
+if(FVM_USE_MPI)
+  target_compile_definitions(fvm PUBLIC FVM_USE_MPI)
+  target_link_libraries(fvm PUBLIC MPI::MPI_CXX)
 endif()
-find_package(Threads REQUIRED)
 
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/bin)
-set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/lib)
-set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/lib)
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+file(GLOB_RECURSE FVM_EXAMPLES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/examples/*.cpp ${CMAKE_SOURCE_DIR}/apps/*.cpp)
+foreach(src ${FVM_EXAMPLES})
+  get_filename_component(name ${src} NAME_WE)
+  add_executable(${name} ${src})
+  target_link_libraries(${name} PRIVATE fvm)
+endforeach()
 
-add_subdirectory(src)
-add_subdirectory(example)
+enable_testing()
+file(GLOB FVM_TESTS CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/tests/*.cpp)
+foreach(src ${FVM_TESTS})
+  get_filename_component(name ${src} NAME_WE)
+  add_executable(${name} ${src})
+  target_link_libraries(${name} PRIVATE fvm)
+  add_test(NAME ${name} COMMAND ${name} WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+  if(FVM_USE_MPI)
+    add_test(NAME ${name}_np3 COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 3 ${MPIEXEC_PREFLAGS}
+             $<TARGET_FILE:${name}> WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+  endif()
+endforeach()

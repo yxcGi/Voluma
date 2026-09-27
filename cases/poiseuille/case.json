@@ -1,0 +1,11 @@
+// 平面 Poiseuille 流（瞬态启动至定常）：x 向周期，平均流速由 meanVelocity 体力维持
+// 解析解 u(y) = 6 Ubar y (H − y) / H²，中心线 1.5 Ubar，驱动压力梯度 12 ν Ubar / H²
+{
+  "mesh": { "box": { "n": [4, 32, 1], "hi": [1, 1, 0.1], "periodic": [true, false, false], "twoD": true,
+                     "walls": ["yMin", "yMax"] } },
+  "physics": { "nu": 0.1, "steady": false },
+  "forcing": { "type": "meanVelocity", "Ubar": [1, 0, 0] },
+  "schemes": { "div": "linear", "ddt": "backward" },
+  "run": { "endTime": 30, "maxCo": 0.5, "maxDt": 0.05, "output": "output", "printInterval": 200 },
+  "lines": [ { "name": "profile", "start": [0.5, 0, 0.05], "end": [0.5, 1, 0.05], "n": 32 } ]
+}

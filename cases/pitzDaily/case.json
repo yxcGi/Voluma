@@ -1,0 +1,19 @@
+// 后台阶层流（OpenFOAM pitzDaily 网格），Re = U h / nu = 20 × 0.0254 / 0.01 ≈ 50
+{
+  "mesh": { "polyMesh": "../../meshes/pitzDaily/polyMesh" },
+  "physics": { "nu": 0.01, "steady": true },
+  "boundary": {
+    "inlet":  { "U": {"type": "fixedValue", "value": [20, 0, 0]}, "p": {"type": "zeroGradient"} },
+    "outlet": { "U": {"type": "zeroGradient"}, "p": {"type": "fixedValue", "value": 0} }
+    // upperWall / lowerWall 为 wall：默认 U 无滑移、p 零梯度
+  },
+  "initial": { "U": [0, 0, 0], "p": 0 },
+  "schemes": { "div": "MUSCL" },
+  "solution": { "alphaU": 0.7, "alphaP": 0.3, "nNonOrthCorr": 1 },
+  "run": { "maxIter": 5000, "residualTol": 1e-6, "output": "output", "printInterval": 100 },
+  "lines": [
+    { "name": "x0.1", "start": [0.1, -0.0254, 0], "end": [0.1, 0.0254, 0], "n": 60 },
+    // 贴近台阶后下壁面，用于求再附着点（Ux 变号处）
+    { "name": "lowerWall", "start": [0.0005, -0.0252, 0], "end": [0.2, -0.0252, 0], "n": 400 }
+  ]
+}
