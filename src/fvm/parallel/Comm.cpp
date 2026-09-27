@@ -236,6 +236,15 @@ void allSumInPlace(double* values, int n) {
 #endif
 }
 
+void allMinInPlace(double* values, int n) {
+#ifdef FVM_USE_MPI
+    if (gSize > 1) MPI_Allreduce(MPI_IN_PLACE, values, n, MPI_DOUBLE, MPI_MIN, MPI_COMM_WORLD);
+#else
+    (void)values;
+    (void)n;
+#endif
+}
+
 void allSum(ExactSum* sums, int n, double* out) { ExactSum::allReduce(sums, n, out); }
 
 void SumAcc::allReduce(SumAcc* s, int n, double* out) {

@@ -125,6 +125,7 @@ double allSumTerms(const double* terms, std::size_t n);
 void allSum(ExactSum* sums, int n, double* out);
 // 把本进程的 double 直接求和（非可复现模式下常用）
 void allSumInPlace(double* values, int n);
+void allMinInPlace(double* values, int n);
 
 // ---------------------------------------------------------- 点对点
 void sendBytes(const std::vector<char>& buf, int dest, int tag);

@@ -8,6 +8,7 @@
 #include "fvm/io/Restart.h"
 #include "fvm/io/TecplotWriter.h"
 #include "fvm/io/VtkWriter.h"
+#include "fvm/models/TurbulenceModel.h"
 #include "fvm/post/Forces.h"
 #include "fvm/solvers/IncompressibleFlow.h"
 
@@ -85,12 +86,18 @@ void runCase(const std::string& caseFile) {
     flow.p().setUniform(ini.get("p", 0.0));
     flow.initialize();
 
+    // 湍流模型（缺省为层流）
+    std::unique_ptr<TurbulenceModel> turb;
+    if (cfg.has("turbulence")) turb = TurbulenceModel::create(flow, cfg["turbulence"], bnd, ini);
+    if (turb && par::master()) std::cout << "turbulence model: " << turb->type() << '\n';
+
     // 运行控制与输出
     const Json& run = cfg["run"];
     const std::string out = resolvePath(dir, run.get("output", "output"));
     if (run.has("restartRead")) {
         const std::string rd = resolvePath(dir, run["restartRead"].string());
         if (!restart::read(rd, flow)) throw std::runtime_error("restart data not found in " + rd);
+        if (turb) turb->readRestart(rd);
         std::cout << "restarted from " << rd << " at t = " << flow.time().time << '\n';
     }
     const std::string restartDir = run.has("restartWrite") ? resolvePath(dir, run["restartWrite"].string()) : "";
@@ -98,6 +105,10 @@ void runCase(const std::string& caseFile) {
     VtkWriter vtk(mesh, out);
     vtk.add(flow.U());
     vtk.add(flow.p());
+    if (turb) {
+        for (auto* f : turb->fields()) vtk.add(*f);
+        vtk.add("nut", flow.nut());
+    }
     const bool writeVtk = run.get("vtk", true);
 
     std::unique_ptr<Probes> probes;
@@ -209,6 +220,7 @@ void runCase(const std::string& caseFile) {
             if (it == 1 || it % printInterval == 0 || conv)
                 std::cout << "iter " << it << "  U res " << info.UInitialResidual << "  p res " << info.pInitialResidual
                           << "  cont " << info.continuityError << '\n';
+            if (turb && (it == 1 || it % printInterval == 0)) turb->printYPlus(std::cout);
             if (probes && it % probeInterval == 0) probes->sample(it);
             if (fm && (it % fm->interval == 0 || conv)) sampleForces(it, 0.0, true);
             if (writeVtk && writeInterval > 0 && it % writeInterval == 0) vtk.write(it);
@@ -239,10 +251,17 @@ void runCase(const std::string& caseFile) {
                 const scalar f = co > 0 ? maxCo / co : 1.2;
                 dt = std::min({dt * std::min(f, 1.2), maxDt});
             }
-            dt = std::min(dt, endTime - flow.time().time);
-            // 落在写出时刻上
-            if (nextWrite < GREAT && flow.time().time + dt > nextWrite * (1 + 1e-12) - 1e-15)
-                dt = std::max(nextWrite - flow.time().time, 1e-12 * dt);
+            // 落在写出时刻 / 结束时刻上：提前几步把剩余时间均分，避免最后一步极小（BDF2 变步长时会产生压力尖峰）
+            {
+                const scalar target = std::min(endTime, nextWrite);
+                const scalar rem = target - flow.time().time;
+                if (rem <= dt * (1 + 1e-9)) {
+                    dt = std::max(rem, 1e-12 * dt);
+                } else {
+                    const scalar nSteps = std::ceil(rem / dt - 1e-9);
+                    if (nSteps <= 4) dt = rem / nSteps;
+                }
+            }
             const StepInfo info = flow.step(dt);
             ++n;
             if (n % printInterval == 0)
@@ -280,7 +299,11 @@ void runCase(const std::string& caseFile) {
         tp.add(flow.p());
         tp.write(out + "/fields.dat", "U_p");
     }
-    if (!restartDir.empty()) restart::write(restartDir, flow);
+    if (!restartDir.empty()) {
+        restart::write(restartDir, flow);
+        if (turb) turb->writeRestart(restartDir);
+    }
+    if (turb) turb->printYPlus(std::cout);
     if (flow.forcing.mode == MomentumForcing::Mode::MeanVelocity) std::cout << "forcing gradP " << flow.forcing.gradP << '\n';
     std::cout << "checksum U " << checksum(flow.U()) << " p " << checksum(flow.p()) << '\n';
     if (par::master()) cfg.reportUnused(std::cout);

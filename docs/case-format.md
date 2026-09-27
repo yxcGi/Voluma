@@ -149,3 +149,31 @@ preconditioner 可选 `GAMG`、`DIC`/`DILU`、`diagonal`、`none`。
 
 输出 `output/forces.csv`（t, Cd, Cl, Cm 及压力/粘性分量、力 Fx Fy Fz），结束时打印平均 Cd、Cl、Cm，
 并写 `output/surface.csv`（壁面面心坐标、法向、Cp、壁面切应力、Cf）。Cp = (p − pRef)/(½U²)，Cf 为切应力沿 dragDir 的分量 /(½U²)。
+
+## turbulence（仅 fvmFlow）
+
+```jsonc
+"turbulence": {
+  "model": "kOmegaSST",        // laminar（缺省）| Smagorinsky | WALE | kEpsilon | realizableKE | kOmega | kOmegaSST | SpalartAllmaras
+  "wallFunctions": true,       // RANS：壁面函数（k-ε 必须；k-ω/SST 的 ω 壁面值对粘性/对数层自动混合，y+≈1 也可用）
+  "coeffs": { "betaStar": 0.09 },   // 覆盖模型系数（名称同 OpenFOAM）
+  "div": "limitedLinear 1",    // 湍流量对流格式
+  "relax": 0.7,                // 稳态欠松弛
+  "solver": { "solver": "PBiCGStab", "preconditioner": "DILU", "tolerance": 1e-10, "relTol": 0.1 },
+  // LES：
+  "vanDriest": true,           // Van Driest 近壁阻尼（Δ = min(Δ, κ y/CΔ (1 − e^{−y+/A+}))）
+  "wallModel": {               // 壁面模型（WMLES），由采样速度按壁面律求 u_τ，给出壁面切应力
+    "type": "spalding",        // spalding | musker | logLaw | powerLaw（Werner-Wengle）
+    "samplingHeight": 0.1      // 采样点离壁距离；0（缺省）为壁面第一层单元
+  }
+}
+```
+
+模型场（k、epsilon、omega、nuTilda）的初值写在 `initial` 里，边界条件写在 `boundary` 里（与 U、p 相同的写法）；
+wall 类型边界不写时自动设置（k、ε、ω 零梯度，壁面单元的 ε、ω 由壁面函数给定；nuTilda 为 0）；
+其他边界不写时为零梯度并会给出提示，入口一般需要给定值。VTK 输出中会附带这些场和 nut，结束时打印壁面 y+。
+
+LES 系数：Smagorinsky `Cs`（默认 0.17；OpenFOAM 默认相当于 0.168）、WALE `Cw`（0.325）、滤波尺度 `deltaCoeff`（1，Δ = 体积立方根，二维取面积平方根）。
+
+验证（`cases/channel395`，Re_τ = 392 的 DNS）：k-ω SST 394、k-ω 399、Spalart-Allmaras 390（y+≈0.1）；
+Re_τ ≈ 2000、y+≈50 用壁面函数时 k-ε 1957、SST 1949、realizable k-ε 1909（DNS 2003）。

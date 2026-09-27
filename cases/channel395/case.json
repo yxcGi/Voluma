@@ -1,0 +1,16 @@
+// 充分发展槽道流 RANS，Re_b = U_b δ / ν = 6875（Moser 等 DNS：Re_τ = 392）
+//   二维、流向周期，半高 δ = 1，体力自动调节保持 U_b = 1；壁面 y+ ≈ 0.1
+//   结果：forcing gradP = u_τ²/δ，Re_τ = u_τ δ/ν；output/line_profile_U.csv 为速度剖面
+// 换模型：turbulence.model 改为 kOmega / SpalartAllmaras（同一网格），
+//        kEpsilon / realizableKE 需壁面函数网格（n 改为 [4, 16, 1] 并去掉 stretch，y+≈23）
+{
+  "mesh": { "box": { "n": [4, 120, 1], "hi": [1, 2, 0.1], "periodic": [true, false, false], "twoD": true,
+                     "walls": ["yMin", "yMax"], "stretch": { "y": 3.0 } } },
+  "physics": { "nu": 1.4545454545e-4, "steady": true },
+  "forcing": { "type": "meanVelocity", "Ubar": [1, 0, 0] },
+  "turbulence": { "model": "kOmegaSST" },
+  "initial": { "U": [1, 0, 0], "k": 0.005, "omega": 50 },
+  "schemes": { "div": "linearUpwind" },
+  "run": { "maxIter": 8000, "residualTol": 1e-8, "printInterval": 1000, "vtk": false },
+  "lines": [ { "name": "profile", "start": [0.5, 0, 0.05], "end": [0.5, 1, 0.05], "n": 200 } ]
+}
