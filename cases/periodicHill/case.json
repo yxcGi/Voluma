@@ -1,11 +1,12 @@
 // 周期山（ERCOFTAC UFR 3-30），Re_b = U_b H/ν = 10595，壁模型 LES；与 OpenLB examples/my_examples/periodichill3d 同设置：
 //   山高 H = 1，Lx = 9H、Ly = 4.5H、上壁 3.036H；x、y 周期，z 壁面法向
 //   U_b 定义为山顶截面平均速度 = 1。这里的体力按全域体平均速度调节：体平均 = U_b·2.036/(3.036 − h̄) = 0.72104（h̄ = 0.21232）
+//   法向均匀分布（同 OpenLB 的均匀格子；WMLES 不需要近壁加密，加密后时间步约小 1/3）
 //   WALE（Cw 0.325）+ 幂律（Werner-Wengle）壁面律，采样高度 0.11H（OpenLB：3.5 格）
 //   t_x = Lx/U_b = 9：前 10 t_x 发展，之后 30 t_x 统计（output/hill/：各站位剖面、下壁 Cf/Cp、分离/再附点）
 //   参考（Breuer 等 2009 LES）：分离 x/H ≈ 0.19–0.20，再附 x/H ≈ 4.56–4.72
 {
-  "mesh": { "periodicHill": { "n": [128, 64, 64], "stretch": 1.5 } },
+  "mesh": { "periodicHill": { "n": [128, 64, 64], "stretch": 0 } },
   "physics": { "nu": 9.438414346389806e-5, "steady": false },
   "forcing": { "type": "meanVelocity", "Ubar": [0.72104, 0, 0] },
   "turbulence": { "model": "WALE",
