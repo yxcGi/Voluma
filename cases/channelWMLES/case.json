@@ -3,6 +3,8 @@
 //   法向 40 层均匀网格（首层 y+ ≈ 25），Δx = Δy ≈ 0.05；Spalding 壁面律，采样高度 3.5 层（0.175H）
 //   WALE + Van Driest；流向 2πH，展向 πH（OpenLB 为 2πH，这里减半以节省计算量）
 //   T_c = H/u_τ ≈ 20：前 30 T_c 发展，之后 20 T_c 统计（output/channel_stats.csv，与 OpenLB CSV 同格式）
+// 结果（4 进程 5.7 小时，58153 步）：Re_τ 998.2（DNS 1000.5）；U+ 在 30 ≤ y+ ≤ 800 平均误差 −0.15%，
+//   首层 U+ 11.6（DNS 12.8，偏低 9%）；对比：python3 tools/compare_channel.py output/channel_stats.csv --ref referenceData_1000.csv
 {
   "mesh": { "box": { "n": [126, 63, 40], "hi": [6.283185307179586, 3.141592653589793, 2],
                      "periodic": [true, true, false], "walls": ["zMin", "zMax"] } },
