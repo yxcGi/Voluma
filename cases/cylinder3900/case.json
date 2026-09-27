@@ -1,0 +1,28 @@
+// 圆柱绕流 LES，Re_D = U D/ν = 3900（Kravchenko & Moin 2000），与 OpenLB examples/my_examples/cylinder3d_WALE 同设置：
+//   直径 D = 1，来流 U = 1；矩形计算域上游 10D、下游 20D、横向 ±10D（阻塞比 5%），展向 πD 周期
+//   入口均匀来流（前 10% 时间缓启动），出口 p = 0，上下自由滑移；初场加 2% 随机扰动以打破对称
+//   O 型网格 192（周向）× 96（径向）× 32（展向），首层 0.0025D（y+ ≈ 1）；WALE + Spalding 壁面律（第一层单元）
+//   共 150 D/U，t ≥ 50 做统计（约 20 个脱落周期）
+// 对比：python3 tools/compare_cylinder.py output
+//   K&M Table II：实验 Cd 0.99±0.05、−Cpb 0.88±0.05、St 0.215±0.005、Lr/D 1.4±0.1、θsep 86°
+//                LES  Cd 1.04、−Cpb 0.94、St 0.210、Lr/D 1.35、θsep 88°
+{
+  "mesh": { "cylinder": { "nTheta": 192, "nRadial": 96, "nSpan": 32, "span": 3.141592653589793, "firstCell": 0.0025,
+                          "upstream": 10, "downstream": 20, "halfHeight": 10 } },
+  "physics": { "nu": 2.564102564102564e-4, "steady": false },
+  "turbulence": { "model": "WALE", "wallModel": { "type": "spalding" } },
+  "schemes": { "div": "linear", "ddt": "backward" },
+  "solution": { "nOuter": 1, "nCorr": 2, "nNonOrthCorr": 1 },
+  "boundary": {
+    "inlet":  { "U": { "type": "fixedValue", "value": [1, 0, 0], "ramp": { "duration": 15 } }, "p": { "type": "zeroGradient" } },
+    "outlet": { "U": { "type": "zeroGradient" }, "p": { "type": "fixedValue", "value": 0 } },
+    "top":    { "U": { "type": "slip" }, "p": { "type": "zeroGradient" } },
+    "bottom": { "U": { "type": "slip" }, "p": { "type": "zeroGradient" } }
+  },
+  "initial": { "U": [0, 0, 0], "noise": 0.02 },
+  "run": { "endTime": 150, "maxCo": 0.5, "maxDt": 0.02, "writeInterval": 25, "output": "output", "printInterval": 500,
+           "restartWrite": "restart" },
+  "forces": { "patches": ["cylinder"], "Uref": 1, "lRef": 1, "averageStart": 50, "interval": 5 },
+  "spanStatistics": { "streamwise": 0, "normal": 1, "wall": "cylinder", "Uref": 1, "H": 1, "start": 50, "pRef": 0,
+                      "dir": "stats" }
+}

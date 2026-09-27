@@ -23,6 +23,17 @@
 
 using namespace cfd;
 
+// 由坐标散列得到的 [-1, 1) 伪随机数（与进程划分无关）
+static double coordHash(const Vec3& x, int comp) {
+    std::uint64_t h = 1469598103934665603ull ^ std::uint64_t(comp);
+    for (scalar v : {x.x, x.y, x.z}) {
+        const std::int64_t q = std::llround(v * 1e9);
+        h = (h ^ std::uint64_t(q)) * 1099511628211ull;
+        h ^= h >> 29;
+    }
+    return double(h >> 11) / double(1ull << 53) * 2 - 1;
+}
+
 // 槽道 LES 初场：1/7 次方律平均剖面（体平均 = Ubulk）+ 无散的流向涡/条带扰动 + 小幅随机扰动。
 // 随机数由单元中心坐标散列得到，与进程划分无关。
 static void initChannelFlow(IncompressibleFlow& flow, const Json& d) {
@@ -44,15 +55,6 @@ static void initChannelFlow(IncompressibleFlow& flow, const Json& d) {
     }
     const scalar Lx = std::max(hi[sx] - lo[sx], SMALL), Lz = std::max(hi[sz] - lo[sz], SMALL);
     const scalar kx = 2 * M_PI * 2 / Lx, kz = 2 * M_PI * 4 / Lz, pi = M_PI;
-    auto hash = [](scalar a, scalar b, scalar c, int comp) {
-        std::uint64_t h = 1469598103934665603ull ^ std::uint64_t(comp);
-        for (scalar v : {a, b, c}) {
-            std::int64_t q = std::llround(v * 1e9);
-            h = (h ^ std::uint64_t(q)) * 1099511628211ull;
-            h ^= h >> 29;
-        }
-        return double(h >> 11) / double(1ull << 53) * 2 - 1;  // [-1, 1)
-    };
     auto& U = flow.U();
     for (label c = 0; c < m.nCells(); ++c) {
         const Vec3& x = m.C()[c];
@@ -66,7 +68,7 @@ static void initChannelFlow(IncompressibleFlow& flow, const Json& d) {
         const scalar dpsidx = A * Ub * (2 * H / pi) * s2 * s2 * kx * std::cos(kx * x[sx]) * std::cos(kz * x[sz]);
         u[sx] += dpsidy + A * Ub * s2 * std::cos(kz * x[sz]);  // 加流向条带
         u[ny] -= dpsidx;
-        for (int k = 0; k < 3; ++k) u[k] += noise * Ub * s2 * hash(x.x, x.y, x.z, k);
+        for (int k = 0; k < 3; ++k) u[k] += noise * Ub * s2 * coordHash(x, k);
         U[c] = u;
     }
     U.correctBoundaryConditions();
@@ -138,6 +140,14 @@ void runCase(const std::string& caseFile) {
     flow.U().setUniform(ini.get("U", Vec3{0, 0, 0}));
     flow.p().setUniform(ini.get("p", 0.0));
     if (ini.has("channel")) initChannelFlow(flow, ini["channel"]);
+    if (ini.has("noise")) {
+        // 叠加随机扰动（绝对幅值），用于打破对称、触发转捩
+        const scalar a = ini["noise"].number();
+        auto& U = flow.U();
+        for (label c = 0; c < mesh->nCells(); ++c)
+            for (int k = 0; k < 3; ++k) U[c][k] += a * coordHash(mesh->C()[c], k);
+        U.correctBoundaryConditions();
+    }
     flow.initialize();
 
     // 湍流模型（缺省为层流）
@@ -234,6 +244,7 @@ void runCase(const std::string& caseFile) {
         spStats = std::make_unique<SpanStatistics>(flow, int(sd.get("streamwise", 0.0)), int(sd.get("normal", 1.0)),
                                                    sd.get("wall", std::string("bottom")), sd.get("Uref", 1.0),
                                                    sd.get("H", 1.0));
+        if (sd.has("pRef")) spStats->setPRef(sd["pRef"].number());
         spStart = sd.get("start", 0.0);
         spDir = out + "/" + sd.get("dir", std::string("spanStatistics"));
         if (sd.has("stations"))

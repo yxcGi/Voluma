@@ -72,35 +72,31 @@ SpanStatistics::SpanStatistics(const IncompressibleFlow& flow, int streamwise, i
         for (label c = 0; c < m.nCells(); ++c) cellBin_[c] = idx.at({key(m.C()[c][sx_]), key(m.C()[c][nz_])});
         acc_.assign(binX_.size() * NQ, 0.0);
     }
-    // 壁面按流向坐标分组
+    // 壁面按 (流向, 法向) 坐标分组（周期山下壁每个 x 一组；圆柱上下表面分开）
     {
         const Patch& pt = m.patches()[wallPatch_];
-        std::vector<double> loc;
-        for (label f = pt.start; f < pt.end(); ++f) loc.push_back(key(m.Cf()[f][sx_]));
-        std::sort(loc.begin(), loc.end());
-        loc.erase(std::unique(loc.begin(), loc.end()), loc.end());
-        const auto g = globalUnion(loc, 1);
-        std::map<double, label> idx;
-        for (double v : g) {
-            idx[v] = label(wX_.size());
-            wX_.push_back(v * q);
+        std::vector<std::pair<double, double>> pr;
+        for (label f = pt.start; f < pt.end(); ++f) pr.emplace_back(key(m.Cf()[f][sx_]), key(m.Cf()[f][nz_]));
+        std::sort(pr.begin(), pr.end());
+        pr.erase(std::unique(pr.begin(), pr.end()), pr.end());
+        std::vector<double> flat;
+        for (auto& p : pr) flat.insert(flat.end(), {p.first, p.second});
+        const auto g = globalUnion(flat, 2);
+        std::map<std::pair<double, double>, label> idx;
+        for (std::size_t i = 0; i < g.size(); i += 2) {
+            idx[{g[i], g[i + 1]}] = label(wX_.size());
+            wX_.push_back(g[i] * q);
+            wZ_.push_back(g[i + 1] * q);
         }
-        std::vector<double> zsum(wX_.size() * 2, 0.0);
         for (label f = pt.start; f < pt.end(); ++f) {
-            const label b = idx.at(key(m.Cf()[f][sx_]));
-            faceBin_.push_back(b);
+            faceBin_.push_back(idx.at({key(m.Cf()[f][sx_]), key(m.Cf()[f][nz_])}));
             const Vec3 n = m.Sf()[f] / m.magSf()[f];
             Vec3 e{};
             e[sx_] = 1;
             Vec3 t = e - dot(e, n) * n;
             t[sy_] = 0;
             faceT_.push_back(t / std::max(mag(t), VSMALL));
-            zsum[2 * b] += m.magSf()[f] * m.Cf()[f][nz_];
-            zsum[2 * b + 1] += m.magSf()[f];
         }
-        par::allSumInPlace(zsum.data(), int(zsum.size()));
-        wZ_.resize(wX_.size());
-        for (std::size_t b = 0; b < wX_.size(); ++b) wZ_[b] = zsum[2 * b] / std::max(zsum[2 * b + 1], VSMALL);
         wacc_.assign(wX_.size() * NW, 0.0);
     }
 }
@@ -167,10 +163,28 @@ std::pair<scalar, scalar> SpanStatistics::write(const std::string& dir, const st
     std::filesystem::create_directories(dir);
     {
         std::ofstream os(dir + "/wall_" + wallName_ + ".csv");
-        os << "x_h;Cf;Cp;ut_Ub\n" << std::setprecision(10);
-        const scalar pRef = P.empty() ? 0.0 : P[0];
+        os << "x_h;Cf;Cp;ut_Ub;y_h\n" << std::setprecision(10);
+        const scalar pRef = hasPRef_ ? pRef_ : (P.empty() ? 0.0 : P[0]);
         for (std::size_t b = 0; b < wX_.size(); ++b)
-            os << wX_[b] / H_ << ';' << Cf[b] << ';' << (P[b] - pRef) * q2 << ';' << Ut[b] / Uref_ << '\n';
+            os << wX_[b] / H_ << ';' << Cf[b] << ';' << (P[b] - pRef) * q2 << ';' << Ut[b] / Uref_ << ';' << wZ_[b] / H_
+               << '\n';
+    }
+    {
+        // 全部单元列的平均场（流向、法向坐标 / H）
+        std::ofstream os(dir + "/fields.csv");
+        os << "x_h;y_h;u_Ub;v_Ub;w_Ub;uu_Ub2;vv_Ub2;ww_Ub2;uv_Ub2;Cp\n" << std::setprecision(8);
+        const scalar iu = 1.0 / Uref_, iu2 = iu * iu;
+        const scalar pRef = hasPRef_ ? pRef_ : (P.empty() ? 0.0 : P[0]);
+        for (std::size_t b = 0; b < binX_.size(); ++b) {
+            const double* a = g.data() + b * NQ;
+            if (a[0] <= 0) continue;
+            const double inv = 1.0 / a[0];
+            const double mu[3] = {a[1] * inv, a[2] * inv, a[3] * inv};
+            os << binX_[b] / H_ << ';' << binZ_[b] / H_ << ';' << mu[0] * iu << ';' << mu[1] * iu << ';' << mu[2] * iu << ';'
+               << (a[4] * inv - mu[0] * mu[0]) * iu2 << ';' << (a[7] * inv - mu[1] * mu[1]) * iu2 << ';'
+               << (a[9] * inv - mu[2] * mu[2]) * iu2 << ';' << (a[5] * inv - mu[0] * mu[1]) * iu2 << ';'
+               << (a[10] * inv - pRef) * 2 * iu2 << '\n';
+        }
     }
     // 各站位：取流向坐标最接近的单元列
     std::vector<double> xs(binX_);

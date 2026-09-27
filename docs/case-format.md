@@ -30,6 +30,8 @@ mpirun -np 8 fvmFlow cases/pitzDaily/case.json
     "stretch": { "y": 2.0 }             // 双侧 tanh 加密，参数越大越贴壁
 } }
 "mesh": { "periodicHill": { "n": [128, 64, 64], "stretch": 1.5 } }   // 周期山贴体网格（ERCOFTAC 山形，Lx 9H、Ly 4.5H、高 3.036H，下壁 bottom、上壁 top）
+"mesh": { "cylinder": { "nTheta": 192, "nRadial": 96, "nSpan": 32, "span": 3.14159, "firstCell": 0.0025,
+                        "upstream": 10, "downstream": 20, "halfHeight": 10, "twoD": false } }   // 圆柱 O 型网格（直径 1，圆心在原点；边界 cylinder、inlet、outlet、top、bottom）
 "mesh": { "airfoil": {                                          // 内置 NACA 四位数翼型二维 C 型网格
     "naca": "0012", "alpha": 4,         // 攻角：翼型绕半弦点旋转，来流保持 +x
     "upstream": 6.5, "downstream": 12.5, "halfHeight": 6,       // 半弦点到入口/出口/上下边界的距离（弦长倍数）
@@ -75,6 +77,8 @@ Fluent 按 zone 类型（wall / symmetry / 其余为 patch），都可以用 `pa
 ## initial
 
 `"initial": { "U": [0, 0, 0], "p": 0 }`，fvmScalar 为 `{ "T": 300 }`。
+
+`"noise": 0.02` 在速度初场上叠加该幅值的随机扰动（与进程数无关），用于打破对称、触发脱落或转捩。
 
 槽道 LES 可用 `"channel"` 生成发展湍流用的初场（1/7 次方律平均剖面，体平均为 Ubulk，叠加无散的流向涡与条带扰动
 和小幅随机扰动；随机数由单元坐标散列得到，与进程数无关）：
