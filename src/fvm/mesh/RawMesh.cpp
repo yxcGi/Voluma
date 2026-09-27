@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -101,9 +102,6 @@ private:
         const auto b = text_.find('{', p);
         const auto e = text_.find('}', b);
         const std::string hdr = text_.substr(b + 1, e - b - 1);
-        if (hdr.find("binary") != std::string::npos && hdr.find("format") != std::string::npos &&
-            hdr.find("ascii") == std::string::npos)
-            throw std::runtime_error("binary polyMesh is not supported; convert with foamFormatConvert");
         std::istringstream hs(hdr);
         std::string w;
         while (hs >> w)
@@ -118,6 +116,103 @@ private:
     std::string class_;
 };
 
+// ------------------------------------------------ OpenFOAM 二进制列表文件
+// 头部 format binary; arch "LSB;label=32;scalar=64";  列表：N ( <N×元素字节> )
+struct FoamBinaryFile {
+    std::string text;
+    std::size_t pos = 0;
+    int labelBytes = 4, scalarBytes = 8;
+    bool binary = false;
+    std::string cls;
+
+    explicit FoamBinaryFile(const std::string& path) {
+        std::ifstream in(path, std::ios::binary);
+        if (!in) throw std::runtime_error("cannot open " + path);
+        std::stringstream ss;
+        ss << in.rdbuf();
+        text = ss.str();
+        const auto p = text.find("FoamFile");
+        if (p == std::string::npos) return;
+        const auto b = text.find('{', p), e = text.find('}', b);
+        const std::string hdr = text.substr(b + 1, e - b - 1);
+        std::istringstream hs(hdr);
+        std::string w;
+        while (hs >> w) {
+            if (w == "format") {
+                hs >> w;
+                binary = w.rfind("binary", 0) == 0;
+            } else if (w == "class") {
+                hs >> cls;
+                if (!cls.empty() && cls.back() == ';') cls.pop_back();
+            }
+        }
+        const auto a = hdr.find("arch");
+        if (a != std::string::npos) {
+            const auto l = hdr.find("label=", a), sc = hdr.find("scalar=", a);
+            if (l != std::string::npos) labelBytes = std::atoi(hdr.c_str() + l + 6) / 8;
+            if (sc != std::string::npos) scalarBytes = std::atoi(hdr.c_str() + sc + 7) / 8;
+            if (hdr.find("MSB", a) != std::string::npos) throw std::runtime_error(path + ": big-endian binary not supported");
+        }
+        pos = e + 1;
+    }
+    void skipWsComments() {
+        while (pos < text.size()) {
+            if (std::isspace(static_cast<unsigned char>(text[pos]))) ++pos;
+            else if (text.compare(pos, 2, "//") == 0) pos = text.find('\n', pos);
+            else if (text.compare(pos, 2, "/*") == 0) pos = text.find("*/", pos) + 2;
+            else break;
+        }
+    }
+    // 返回列表元素起始字节与数目
+    std::pair<const char*, glabel> list(std::size_t elemBytes) {
+        skipWsComments();
+        char* e;
+        const glabel n = std::strtoll(text.c_str() + pos, &e, 10);
+        pos = std::size_t(e - text.c_str());
+        skipWsComments();
+        if (text[pos] != '(') throw std::runtime_error("binary list: expected '('");
+        ++pos;
+        const char* data = text.data() + pos;
+        pos += std::size_t(n) * elemBytes;
+        if (pos >= text.size() || text[pos] != ')') throw std::runtime_error("binary list: size mismatch");
+        ++pos;
+        return {data, n};
+    }
+    std::vector<glabel> labels() {
+        auto [d, n] = list(labelBytes);
+        std::vector<glabel> v(n);
+        for (glabel i = 0; i < n; ++i) {
+            if (labelBytes == 4) {
+                std::int32_t x;
+                std::memcpy(&x, d + 4 * i, 4);
+                v[i] = x;
+            } else {
+                std::int64_t x;
+                std::memcpy(&x, d + 8 * i, 8);
+                v[i] = glabel(x);
+            }
+        }
+        return v;
+    }
+    std::vector<Vec3> vectors() {
+        auto [d, n] = list(3 * scalarBytes);
+        std::vector<Vec3> v(n);
+        for (glabel i = 0; i < n; ++i)
+            for (int k = 0; k < 3; ++k) {
+                if (scalarBytes == 8) {
+                    double x;
+                    std::memcpy(&x, d + 24 * i + 8 * k, 8);
+                    v[i][k] = x;
+                } else {
+                    float x;
+                    std::memcpy(&x, d + 12 * i + 4 * k, 4);
+                    v[i][k] = x;
+                }
+            }
+        return v;
+    }
+};
+
 void writeHeader(std::ostream& os, const std::string& cls, const std::string& obj) {
     os << "FoamFile\n{\n    format      ascii;\n    class       " << cls << ";\n    location    \"constant/polyMesh\";\n"
        << "    object      " << obj << ";\n}\n\n";
@@ -127,6 +222,17 @@ void writeHeader(std::ostream& os, const std::string& cls, const std::string& ob
 
 RawMesh readPolyMesh(const std::string& dir) {
     RawMesh m;
+    if (!std::filesystem::exists(dir + "/points") && std::filesystem::exists(dir + "/points.gz"))
+        throw std::runtime_error(dir + ": compressed polyMesh (*.gz) is not supported; gunzip the files first");
+    if (FoamBinaryFile(dir + "/points").binary) {
+        m.points = FoamBinaryFile(dir + "/points").vectors();
+        FoamBinaryFile ff(dir + "/faces");
+        if (ff.cls != "faceCompactList") throw std::runtime_error(dir + "/faces: binary faces must be faceCompactList");
+        m.faceOffsets = ff.labels();
+        m.facePoints = ff.labels();
+        m.owner = FoamBinaryFile(dir + "/owner").labels();
+        m.neighbour = FoamBinaryFile(dir + "/neighbour").labels();
+    } else {
     {
         FoamTokens t(dir + "/points");
         const glabel n = t.listStart();
@@ -175,6 +281,7 @@ RawMesh readPolyMesh(const std::string& dir) {
         const glabel n = t.listStart();
         m.neighbour.resize(n);
         for (auto& o : m.neighbour) o = t.nextInt();
+    }
     }
     {
         FoamTokens t(dir + "/boundary");

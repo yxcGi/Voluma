@@ -12,7 +12,15 @@ mpirun -np 8 fvmFlow cases/pitzDaily/case.json
 ## mesh
 
 ```jsonc
-"mesh": { "polyMesh": "../../meshes/pitzDaily/polyMesh" }      // OpenFOAM polyMesh（ASCII）
+"mesh": { "polyMesh": "../../meshes/pitzDaily/polyMesh" }      // OpenFOAM polyMesh（ASCII 或二进制）
+"mesh": { "file": "wing.msh",                                   // 外部网格文件，格式按内容自动识别：
+                                                                //   Gmsh .msh（ASCII 2.2 / 4.1）、Fluent .msh/.cas（ASCII 或二进制段）、polyMesh 目录
+    "format": "auto",                   // 可强制 "gmsh" / "fluent"
+    "scale": 0.001,                     // 坐标缩放（如 mm → m），默认 1
+    "depth": 0.1,                       // 二维网格（三角形/四边形/多边形）拉伸一层的厚度，前后面为 empty
+    "patchTypes": { "airfoil": "wall", "frontAndBack": "empty" },  // 覆盖边界类型
+    "writePolyMesh": "constant/polyMesh"  // 可选：顺便存成 polyMesh
+} }
 "mesh": { "box": {                                              // 内置长方体网格
     "n": [64, 64, 1], "lo": [0, 0, 0], "hi": [1, 1, 0.1],
     "periodic": [true, false, false],   // 周期方向
@@ -21,7 +29,20 @@ mpirun -np 8 fvmFlow cases/pitzDaily/case.json
     "names": { "yMax": "lid" },         // 重命名边界（xMin xMax yMin yMax zMin zMax）
     "stretch": { "y": 2.0 }             // 双侧 tanh 加密，参数越大越贴壁
 } }
+"mesh": { "airfoil": {                                          // 内置 NACA 四位数翼型二维 C 型网格
+    "naca": "0012", "alpha": 4,         // 攻角：翼型绕半弦点旋转，来流保持 +x
+    "upstream": 6.5, "downstream": 12.5, "halfHeight": 6,       // 半弦点到入口/出口/上下边界的距离（弦长倍数）
+    "nAirfoil": 300, "nWake": 120, "nNormal": 120, "firstCell": 1e-3, "depth": 0.1
+} }                                     // 边界：airfoil（wall）、inlet、outlet、top、bottom
 ```
+
+外部网格的边界名：Gmsh 取 Physical 组名（三维用 Physical Surface，二维用 Physical Curve；没有分组的边界面归入
+`defaultFaces`），Fluent 取 zone 名。边界类型默认：Gmsh 名称含 wall 的为 wall、含 symmetry 的为 symmetry，
+Fluent 按 zone 类型（wall / symmetry / 其余为 patch），都可以用 `patchTypes` 改。支持四面体、六面体、三棱柱、
+金字塔、任意多面体（Fluent / polyMesh）及其混合；Gmsh 高阶单元只取角点。周期边界和非协调（悬挂节点）网格暂不支持导入。
+
+`meshCheck <网格> [--scale s] [--depth d] [--patch-type 名=类型] [--polymesh 目录] [--vtk 目录]` 可单独检查网格
+（单元闭合性、面朝向、体积、非正交角、各边界面积）并转换成 polyMesh / VTK。
 
 ## physics
 
@@ -40,7 +61,7 @@ mpirun -np 8 fvmFlow cases/pitzDaily/case.json
 
 | type | 参数 | 含义 |
 | --- | --- | --- |
-| `fixedValue` | `value` | 定值（速度写 `[u, v, w]`） |
+| `fixedValue` | `value`，可选 `ramp` | 定值（速度写 `[u, v, w]`）；`"ramp": {"duration": 2}` 时在 t∈[0, duration] 内由 0 平滑增到 value（smoothstep 6y⁵−15y⁴+10y³，`"shape": "linear"` 为线性） |
 | `noSlip` | | 速度为零 |
 | `zeroGradient` | | 零法向梯度 |
 | `fixedGradient` | `gradient` | 给定法向梯度 |
@@ -101,6 +122,7 @@ preconditioner 可选 `GAMG`、`DIC`/`DILU`、`diagonal`、`none`。
 | `output` | 输出目录，默认 `output` | |
 | `vtk` / `tecplot` | 是否写 VTK（默认是）/ Tecplot `.dat`（默认否） | |
 | `restartWrite` `restartRead` | 续算文件目录（与进程数无关，可换进程数续算） | |
+| `printFluxes` | 打印时同时列出各边界体积通量（结束时总会列出） | |
 
 ## probes 与 lines
 
@@ -110,3 +132,20 @@ preconditioner 可选 `GAMG`、`DIC`/`DILU`、`diagonal`、`none`。
 ```
 
 探针取所在单元（最近体心）的值，结果与进程数无关。
+
+## forces（仅 fvmFlow）
+
+```jsonc
+"forces": {
+  "patches": ["airfoil"],               // 积分的壁面
+  "Uref": 1, "lRef": 1,                 // 参考速度、参考长度；参考面积 = lRef × span（二维 span 自动取网格厚度）
+  "dragDir": [1, 0, 0], "liftDir": [0, 1, 0], "pitchAxis": [0, 0, 1],
+  "CofR": [0.25, 0, 0],                 // 力矩参考点
+  "rho": 1, "pRef": 0,                  // p 为运动学压力 p/ρ
+  "averageStart": 12.5,                 // 从该时刻起做时间加权平均（瞬态）
+  "interval": 10                        // 每多少步写一行
+}
+```
+
+输出 `output/forces.csv`（t, Cd, Cl, Cm 及压力/粘性分量、力 Fx Fy Fz），结束时打印平均 Cd、Cl、Cm，
+并写 `output/surface.csv`（壁面面心坐标、法向、Cp、壁面切应力、Cf）。Cp = (p − pRef)/(½U²)，Cf 为切应力沿 dragDir 的分量 /(½U²)。

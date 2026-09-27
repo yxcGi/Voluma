@@ -60,7 +60,9 @@ public:
     MeshPtr meshPtr() const { return mesh_; }
     const Mesh& mesh() const { return *mesh_; }
     VectorField& U() { return U_; }
+    const VectorField& U() const { return U_; }
     ScalarField& p() { return p_; }
+    const ScalarField& p() const { return p_; }
     std::vector<scalar>& phi() { return phi_; }
     const std::vector<scalar>& phi() const { return phi_; }
     scalar nu() const { return nu_; }

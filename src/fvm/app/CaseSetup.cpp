@@ -1,7 +1,10 @@
 #include "fvm/app/CaseSetup.h"
 
+#include "fvm/mesh/AirfoilMesh.h"
+#include "fvm/mesh/MeshReaders.h"
 #include "fvm/mesh/RawMesh.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <stdexcept>
 
@@ -22,6 +25,17 @@ MeshPtr buildMesh(const Json& d, const std::string& caseDir) {
     if (par::master()) {
         if (d.has("polyMesh")) {
             raw = readPolyMesh(resolvePath(caseDir, d["polyMesh"].string()));
+        } else if (d.has("file")) {
+            // 外部网格：Gmsh .msh / Fluent .msh/.cas / polyMesh 目录，按内容自动识别
+            MeshImportOptions o;
+            o.scale = d.get("scale", 1.0);
+            o.depth2D = d.get("depth", o.depth2D);
+            if (d.has("patchTypes"))
+                for (auto& [name, t] : d["patchTypes"].items()) o.patchTypes[name] = patchTypeFromString(t.string());
+            const std::string f = resolvePath(caseDir, d["file"].string());
+            const std::string fmt = d.get("format", "auto");
+            raw = fmt == "gmsh" ? readGmsh(f, o) : fmt == "fluent" ? readFluent(f, o) : readMeshFile(f, o);
+            if (d.has("writePolyMesh")) writePolyMesh(raw, resolvePath(caseDir, d["writePolyMesh"].string()));
         } else if (d.has("box")) {
             const Json& b = d["box"];
             BoxSpec s;
@@ -46,13 +60,33 @@ MeshPtr buildMesh(const Json& d, const std::string& caseDir) {
                 for (int k = 0; k < 6; ++k)
                     if (b["names"].has(sides[k])) s.names[k] = b["names"][sides[k]].string();
             raw = generateBox(s);
+        } else if (d.has("airfoil")) {
+            const Json& a = d["airfoil"];
+            AirfoilMeshSpec s;
+            s.naca = a.get("naca", s.naca);
+            s.closedTE = a.get("closedTE", s.closedTE);
+            s.chord = a.get("chord", s.chord);
+            s.alphaDeg = a.get("alpha", s.alphaDeg);
+            s.upstream = a.get("upstream", s.upstream);
+            s.downstream = a.get("downstream", s.downstream);
+            s.halfHeight = a.get("halfHeight", s.halfHeight);
+            s.nAirfoil = a.get("nAirfoil", s.nAirfoil);
+            s.nWake = a.get("nWake", s.nWake);
+            s.nNormal = a.get("nNormal", s.nNormal);
+            s.firstCell = a.get("firstCell", s.firstCell);
+            s.smoothIter = a.get("smoothIter", s.smoothIter);
+            s.depth = a.get("depth", s.depth);
+            raw = generateAirfoilCMesh(s);
+            if (a.has("writePolyMesh")) writePolyMesh(raw, resolvePath(caseDir, a["writePolyMesh"].string()));
         } else {
-            throw std::runtime_error("mesh: need \"polyMesh\" or \"box\"");
+            throw std::runtime_error("mesh: need \"polyMesh\", \"file\", \"box\" or \"airfoil\"");
         }
     } else {
         // 其他进程也要把字典标记为已读，避免误报
+        for (const char* k : {"file", "format", "scale", "depth", "patchTypes", "writePolyMesh"}) (void)d[k];
         (void)d["polyMesh"];
         (void)d["box"];
+        (void)d["airfoil"];
     }
     return Mesh::build(par::master() ? &raw : nullptr);
 }
@@ -62,7 +96,21 @@ template <class T> void setBoundaryCondition(VolField<T>& f, const std::string& 
     if (m.isEmptyPatch(patch)) return;
     const std::string type = d.get("type", "");
     if (type == "fixedValue") {
-        f.template set<FixedValueBC<T>>(patch, d["value"].template as<T>());
+        const T v = d["value"].template as<T>();
+        if (d.has("ramp")) {
+            // 缓启动：value · s(t/duration)，s 为 smoothstep（6y⁵−15y⁴+10y³，同 OpenLB PolynomialStartScale）或 linear
+            const Json& r = d["ramp"];
+            const scalar dur = r["duration"].number();
+            const bool smooth = r.get("shape", "smoothstep") == "smoothstep";
+            if (!(dur > 0)) throw std::runtime_error(f.name() + " on patch " + patch + ": ramp.duration must be > 0");
+            f.template set<FixedValueBC<T>>(patch, typename FixedValueBC<T>::Fn([v, dur, smooth](const Vec3&, scalar t) {
+                const scalar y = std::clamp(t / dur, scalar(0), scalar(1));
+                const scalar s = smooth ? y * y * y * (10 + y * (6 * y - 15)) : y;
+                return T(v * s);
+            }));
+        } else {
+            f.template set<FixedValueBC<T>>(patch, v);
+        }
     } else if (type == "noSlip") {
         f.template set<FixedValueBC<T>>(patch, Traits<T>::zero());
     } else if (type == "zeroGradient") {

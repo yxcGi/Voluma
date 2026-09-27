@@ -8,9 +8,12 @@
 #include "fvm/io/Restart.h"
 #include "fvm/io/TecplotWriter.h"
 #include "fvm/io/VtkWriter.h"
+#include "fvm/post/Forces.h"
 #include "fvm/solvers/IncompressibleFlow.h"
 
 #include <cmath>
+#include <filesystem>
+#include <fstream>
 #include <iomanip>
 #include <iostream>
 
@@ -108,6 +111,76 @@ void runCase(const std::string& caseFile) {
         probes->add(flow.p());
         probeInterval = pr.get("interval", 1);
     }
+    // 壁面力与力系数：forces.csv 时间序列（t 从 averageStart 起做时间加权平均）、结束时写表面 Cp/Cf
+    struct ForceMonitor {
+        std::unique_ptr<Forces> f;
+        Vec3 dragDir{1, 0, 0}, liftDir{0, 1, 0}, pitchAxis{0, 0, 1};
+        scalar Uref = 1, lRef = 1, span = 1, averageStart = GREAT;
+        int interval = 1;
+        std::ofstream csv;
+        scalar sumT = 0, sumCd = 0, sumCl = 0, sumCm = 0;
+    };
+    std::unique_ptr<ForceMonitor> fm;
+    if (cfg.has("forces")) {
+        const Json& fd = cfg["forces"];
+        std::vector<std::string> names;
+        for (auto& n : fd["patches"].array()) names.push_back(n.string());
+        fm = std::make_unique<ForceMonitor>();
+        fm->f = std::make_unique<Forces>(flow, names);
+        fm->f->rho = fd.get("rho", 1.0);
+        fm->f->pRef = fd.get("pRef", 0.0);
+        fm->f->CofR = fd.get("CofR", Vec3{0, 0, 0});
+        fm->dragDir = fd.get("dragDir", fm->dragDir);
+        fm->liftDir = fd.get("liftDir", fm->liftDir);
+        fm->pitchAxis = fd.get("pitchAxis", fm->pitchAxis);
+        fm->Uref = fd.get("Uref", 1.0);
+        fm->lRef = fd.get("lRef", 1.0);
+        fm->span = fd.get("span", fm->f->span());
+        fm->interval = fd.get("interval", 1);
+        fm->averageStart = fd.get("averageStart", steady ? GREAT : 0.0);
+        if (par::master()) {
+            std::filesystem::create_directories(out);
+            fm->csv.open(out + "/forces.csv", flow.time().time > 0 ? std::ios::app : std::ios::trunc);
+            if (flow.time().time <= 0) fm->csv << "t,Cd,Cl,Cm,Cd_p,Cd_v,Cl_p,Cl_v,Fx,Fy,Fz\n";
+            fm->csv << std::setprecision(10);
+        }
+    }
+    // 返回 {Cd, Cl, Cm}
+    auto sampleForces = [&](scalar t, scalar dt, bool writeRow) -> Vec3 {
+        const ForceResult r = fm->f->compute();
+        const scalar q = 0.5 * fm->f->rho * fm->Uref * fm->Uref * fm->lRef * fm->span;
+        const Vec3 F = r.force();
+        const scalar Cd = dot(F, fm->dragDir) / q, Cl = dot(F, fm->liftDir) / q;
+        const scalar Cm = dot(r.moment(), fm->pitchAxis) / (q * fm->lRef);
+        if (t >= fm->averageStart * (1 - 1e-12) && dt > 0) {
+            fm->sumT += dt;
+            fm->sumCd += Cd * dt;
+            fm->sumCl += Cl * dt;
+            fm->sumCm += Cm * dt;
+        }
+        if (writeRow && par::master())
+            fm->csv << t << ',' << Cd << ',' << Cl << ',' << Cm << ',' << dot(r.pressure, fm->dragDir) / q << ','
+                    << dot(r.viscous, fm->dragDir) / q << ',' << dot(r.pressure, fm->liftDir) / q << ','
+                    << dot(r.viscous, fm->liftDir) / q << ',' << F.x << ',' << F.y << ',' << F.z << '\n';
+        return {Cd, Cl, Cm};
+    };
+
+    // 各边界的体积通量（正为流出）
+    auto printFluxes = [&] {
+        const Mesh& m = *mesh;
+        std::vector<double> q(m.patches().size(), 0.0);
+        for (std::size_t p = 0; p < q.size(); ++p) {
+            const auto& pt = m.patches()[p];
+            for (label f = pt.start; f < pt.end(); ++f) q[p] += flow.phi()[f];
+        }
+        par::allSumInPlace(q.data(), int(q.size()));
+        std::cout << "  boundary fluxes:";
+        for (std::size_t p = 0; p < q.size(); ++p)
+            if (m.patches()[p].type != PatchType::Cyclic) std::cout << ' ' << m.patches()[p].name << ' ' << q[p];
+        std::cout << '\n';
+    };
+    const bool fluxReport = run.get("printFluxes", false);
+
     auto writeLines = [&] {
         if (!cfg.has("lines")) return;
         for (auto& l : cfg["lines"].array()) {
@@ -137,6 +210,7 @@ void runCase(const std::string& caseFile) {
                 std::cout << "iter " << it << "  U res " << info.UInitialResidual << "  p res " << info.pInitialResidual
                           << "  cont " << info.continuityError << '\n';
             if (probes && it % probeInterval == 0) probes->sample(it);
+            if (fm && (it % fm->interval == 0 || conv)) sampleForces(it, 0.0, true);
             if (writeVtk && writeInterval > 0 && it % writeInterval == 0) vtk.write(it);
             if (conv) break;
         }
@@ -175,6 +249,12 @@ void runCase(const std::string& caseFile) {
                 std::cout << "t " << flow.time().time << "  dt " << dt << "  Co " << info.maxCo << "  cont "
                           << info.continuityError << '\n';
             if (probes && n % probeInterval == 0) probes->sample(flow.time().time);
+            if (fm) {
+                // 平均每步都累积（与采样间隔无关），写行按 interval
+                const Vec3 c = sampleForces(flow.time().time, dt, n % fm->interval == 0);
+                if (n % printInterval == 0) std::cout << "  Cd " << c.x << "  Cl " << c.y << '\n';
+            }
+            if (fluxReport && n % printInterval == 0) printFluxes();
             if (flow.time().time >= nextWrite * (1 - 1e-12)) {
                 if (writeVtk) vtk.write(flow.time().time);
                 nextWrite += writeInterval;
@@ -183,7 +263,17 @@ void runCase(const std::string& caseFile) {
         std::cout << "reached t = " << flow.time().time << " in " << n << " steps, " << par::wallTime() - t0 << " s\n";
         if (writeVtk && writeInterval <= 0) vtk.write(flow.time().time);
     }
+    printFluxes();
     writeLines();
+    if (fm) {
+        const Vec3 c = sampleForces(flow.time().time, 0.0, false);
+        std::cout << "forces: final Cd " << c.x << "  Cl " << c.y << "  Cm " << c.z << '\n';
+        if (fm->sumT > 0)
+            std::cout << "forces: mean over t >= " << fm->averageStart << " (" << fm->sumT << "): Cd "
+                      << fm->sumCd / fm->sumT << "  Cl " << fm->sumCl / fm->sumT << "  Cm " << fm->sumCm / fm->sumT
+                      << '\n';
+        fm->f->writeSurface(out + "/surface.csv", fm->Uref, fm->dragDir);
+    }
     if (run.get("tecplot", false)) {
         TecplotWriter tp(mesh);
         tp.add(flow.U());
