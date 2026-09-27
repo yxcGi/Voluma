@@ -4,6 +4,9 @@
 //   上下边界取来流（U = 来流并同样缓启动、p 零梯度）。OpenLB 上下用对流出流边界（BC_MODE 1）；
 //   这里试过开边界（U 零梯度、p = 0），入口来流会从上下边界大量流出，改用来流边界更稳定
 // 换攻角：改 mesh.airfoil.alpha
+// 结果（4 进程约 13 分钟，t > 12.5 平均）：
+//   α=0：Cd 0.1202（参考 0.119）
+//   α=4：Cd 0.1251、Cl 0.2052（Di Ilio 等 0.1252 / 0.2022；OpenLB 0.1277 / 0.2092）
 {
   "mesh": { "airfoil": { "naca": "0012", "alpha": 0, "upstream": 6.5, "downstream": 12.5, "halfHeight": 6,
                          "nAirfoil": 300, "nWake": 120, "nNormal": 120, "firstCell": 1e-3, "depth": 0.1 } },
