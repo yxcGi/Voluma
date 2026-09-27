@@ -1,0 +1,19 @@
+// 壁模型 LES 槽道流，Re_τ ≈ 1000（Lee & Moser 2015 DNS），与 OpenLB examples/my_examples/channel3d 同设置：
+//   半高 H = 1，ν = 5e-5，体力自动调节保持 U_b = 1（Re_b = 2 U_b H/ν = 40000）；z 为壁面法向
+//   法向 40 层均匀网格（首层 y+ ≈ 25），Δx = Δy ≈ 0.05；Spalding 壁面律，采样高度 3.5 层（0.175H）
+//   WALE + Van Driest；流向 2πH，展向 πH（OpenLB 为 2πH，这里减半以节省计算量）
+//   T_c = H/u_τ ≈ 20：前 30 T_c 发展，之后 20 T_c 统计（output/channel_stats.csv，与 OpenLB CSV 同格式）
+{
+  "mesh": { "box": { "n": [126, 63, 40], "hi": [6.283185307179586, 3.141592653589793, 2],
+                     "periodic": [true, true, false], "walls": ["zMin", "zMax"] } },
+  "physics": { "nu": 5e-5, "steady": false },
+  "forcing": { "type": "meanVelocity", "Ubar": [1, 0, 0] },
+  "turbulence": { "model": "WALE", "vanDriest": true,
+                  "wallModel": { "type": "spalding", "samplingHeight": 0.175 } },
+  "initial": { "channel": { "Ubulk": 1, "streamwise": 0, "normal": 2, "walls": [0, 2], "amplitude": 0.1, "noise": 0.05 } },
+  "schemes": { "div": "linear", "ddt": "backward" },
+  "solution": { "nOuter": 1, "nCorr": 2, "nNonOrthCorr": 0 },
+  "run": { "endTime": 1000, "maxCo": 0.5, "maxDt": 0.05, "writeInterval": 100, "output": "output",
+           "printInterval": 200, "restartWrite": "restart" },
+  "channelStatistics": { "streamwise": 0, "normal": 2, "walls": [0, 2], "start": 600 }
+}

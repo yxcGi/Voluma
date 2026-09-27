@@ -75,6 +75,13 @@ Fluent 按 zone 类型（wall / symmetry / 其余为 patch），都可以用 `pa
 
 `"initial": { "U": [0, 0, 0], "p": 0 }`，fvmScalar 为 `{ "T": 300 }`。
 
+槽道 LES 可用 `"channel"` 生成发展湍流用的初场（1/7 次方律平均剖面，体平均为 Ubulk，叠加无散的流向涡与条带扰动
+和小幅随机扰动；随机数由单元坐标散列得到，与进程数无关）：
+
+```jsonc
+"initial": { "channel": { "Ubulk": 1, "streamwise": 0, "normal": 2, "walls": [0, 2], "amplitude": 0.1, "noise": 0.05 } }
+```
+
 ## schemes
 
 | 键 | 可选值 | 默认 |

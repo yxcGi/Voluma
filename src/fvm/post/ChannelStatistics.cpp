@@ -41,6 +41,9 @@ ChannelStatistics::ChannelStatistics(const IncompressibleFlow& flow, int streamw
     for (double v : all)
         if (layerY_.empty() || v - layerY_.back() > tol) layerY_.push_back(v);
     cellLayer_.resize(m.nCells());
+    upper_.resize(m.nCells());
+    for (label c = 0; c < m.nCells(); ++c)
+        upper_[c] = std::abs(yWall1 - m.C()[c][ny_]) < std::abs(m.C()[c][ny_] - yWall0);
     for (label c = 0; c < m.nCells(); ++c) {
         auto it = std::lower_bound(layerY_.begin(), layerY_.end(), d[c] - tol);
         cellLayer_[c] = label(it - layerY_.begin());
@@ -59,7 +62,9 @@ void ChannelStatistics::sample(scalar dt) {
         double* a = acc_.data() + std::size_t(cellLayer_[c]) * NQ;
         const scalar w = m.V()[c] * dt;
         const Vec3& u = U[c];
-        const scalar ui[3] = {u[ax[0]], u[ax[1]], u[ax[2]]};
+        // 上半通道镜像到下半：法向分量反号（否则两半的剪应力 uw 相互抵消）
+        const scalar sg[3] = {1, 1, upper_[c] ? -1.0 : 1.0};
+        const scalar ui[3] = {u[ax[0]], u[ax[1]], sg[2] * u[ax[2]]};
         a[0] += w;
         for (int k = 0; k < 3; ++k) a[1 + k] += w * ui[k];
         int q = 4;
@@ -72,7 +77,7 @@ void ChannelStatistics::sample(scalar dt) {
             const Tensor S = symm(G[c]);
             q = 12;
             for (int i = 0; i < 3; ++i)
-                for (int j = i; j < 3; ++j) a[q++] += w * (-2.0 * nut[c] * S(ax[i], ax[j]));
+                for (int j = i; j < 3; ++j) a[q++] += w * (-2.0 * nut[c] * sg[i] * sg[j] * S(ax[i], ax[j]));
         }
     }
     // 壁面切应力（面积平均，所有壁面）
