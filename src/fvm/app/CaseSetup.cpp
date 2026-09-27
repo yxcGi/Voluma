@@ -1,6 +1,7 @@
 #include "fvm/app/CaseSetup.h"
 
 #include "fvm/mesh/AirfoilMesh.h"
+#include "fvm/mesh/PeriodicHill.h"
 #include "fvm/mesh/MeshReaders.h"
 #include "fvm/mesh/RawMesh.h"
 
@@ -79,8 +80,23 @@ MeshPtr buildMesh(const Json& d, const std::string& caseDir) {
             s.depth = a.get("depth", s.depth);
             raw = generateAirfoilCMesh(s);
             if (a.has("writePolyMesh")) writePolyMesh(raw, resolvePath(caseDir, a["writePolyMesh"].string()));
+        } else if (d.has("periodicHill")) {
+            const Json& a = d["periodicHill"];
+            PeriodicHillSpec s;
+            if (a.has("n")) {
+                const Json& n = a["n"];
+                if (!n.isArray() || n.size() != 3) throw std::runtime_error("mesh.periodicHill.n must be [nx, ny, nz]");
+                for (int k = 0; k < 3; ++k) s.n[k] = int(n[k].number());
+            }
+            s.H = a.get("H", s.H);
+            s.length = a.get("length", s.length);
+            s.span = a.get("span", s.span);
+            s.height = a.get("height", s.height);
+            s.stretch = a.get("stretch", s.stretch);
+            raw = generatePeriodicHillMesh(s);
+            if (a.has("writePolyMesh")) writePolyMesh(raw, resolvePath(caseDir, a["writePolyMesh"].string()));
         } else {
-            throw std::runtime_error("mesh: need \"polyMesh\", \"file\", \"box\" or \"airfoil\"");
+            throw std::runtime_error("mesh: need \"polyMesh\", \"file\", \"box\", \"airfoil\" or \"periodicHill\"");
         }
     } else {
         // 其他进程也要把字典标记为已读，避免误报
@@ -88,6 +104,7 @@ MeshPtr buildMesh(const Json& d, const std::string& caseDir) {
         (void)d["polyMesh"];
         (void)d["box"];
         (void)d["airfoil"];
+        (void)d["periodicHill"];
     }
     return Mesh::build(par::master() ? &raw : nullptr);
 }

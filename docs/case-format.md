@@ -29,6 +29,7 @@ mpirun -np 8 fvmFlow cases/pitzDaily/case.json
     "names": { "yMax": "lid" },         // 重命名边界（xMin xMax yMin yMax zMin zMax）
     "stretch": { "y": 2.0 }             // 双侧 tanh 加密，参数越大越贴壁
 } }
+"mesh": { "periodicHill": { "n": [128, 64, 64], "stretch": 1.5 } }   // 周期山贴体网格（ERCOFTAC 山形，Lx 9H、Ly 4.5H、高 3.036H，下壁 bottom、上壁 top）
 "mesh": { "airfoil": {                                          // 内置 NACA 四位数翼型二维 C 型网格
     "naca": "0012", "alpha": 4,         // 攻角：翼型绕半弦点旋转，来流保持 +x
     "upstream": 6.5, "downstream": 12.5, "halfHeight": 6,       // 半弦点到入口/出口/上下边界的距离（弦长倍数）
@@ -176,6 +177,25 @@ preconditioner 可选 `GAMG`、`DIC`/`DILU`、`diagonal`、`none`。
 `y+;u_tau;uAv+;uu++;uv++;uw++;vv++;vw++;ww++;pRMS;uu_sgs++;…;ww_sgs++`。
 u、v、w 依次为流向、展向、法向分量；上下两半按到最近壁面的距离合并；u_τ 由壁面平均切应力（含壁模型的 ν_eff）
 的时间平均得到；亚格子应力为 −2ν_t S_ij。
+
+## spanStatistics（仅 fvmFlow）
+
+展向均匀流动（周期山等）的展向 + 时间平均统计，输出与 OpenLB `periodichill3d` 同格式：
+
+```jsonc
+"spanStatistics": {
+  "streamwise": 0, "normal": 2,         // 展向为剩下的轴；同一列单元的流向、法向中心坐标须相同（拉伸网格）
+  "wall": "bottom",                     // 统计壁面切应力、壁压的壁面
+  "Uref": 1, "H": 1,                    // 归一化速度、长度
+  "start": 90,                          // 开始统计的时刻
+  "stations": [0.05, 0.5, 1, 2],        // 剖面站位 x/H
+  "dir": "hill"
+}
+```
+
+写 `output/hill/profile_xh_<站>.csv`（`y_h;u_Ub;v_Ub;uu_Ub2;vv_Ub2;ww_Ub2;uv_Ub2;k_Ub2`，v 为法向、ww 为展向）
+和 `wall_<wall>.csv`（`x_h;Cf;Cp;ut_Ub`），并打印按 Cf 变号求得的分离点、再附点。
+与实验对比：`tools/compare_hill.py output/hill --ref <UFR3-30 实验数据目录> --out hill.png`。
 
 ## turbulence（仅 fvmFlow）
 

@@ -11,6 +11,7 @@
 #include "fvm/models/TurbulenceModel.h"
 #include "fvm/post/ChannelStatistics.h"
 #include "fvm/post/Forces.h"
+#include "fvm/post/SpanStatistics.h"
 #include "fvm/solvers/IncompressibleFlow.h"
 
 #include <cmath>
@@ -223,6 +224,28 @@ void runCase(const std::string& caseFile) {
         chStart = cd.get("start", 0.0);
         chFile = out + "/" + cd.get("file", std::string("channel_stats.csv"));
     }
+    // 展向均匀流动统计（周期山等，OpenLB periodichill3d 同格式）
+    std::unique_ptr<SpanStatistics> spStats;
+    scalar spStart = 0;
+    std::string spDir;
+    std::vector<scalar> spStations;
+    if (cfg.has("spanStatistics")) {
+        const Json& sd = cfg["spanStatistics"];
+        spStats = std::make_unique<SpanStatistics>(flow, int(sd.get("streamwise", 0.0)), int(sd.get("normal", 1.0)),
+                                                   sd.get("wall", std::string("bottom")), sd.get("Uref", 1.0),
+                                                   sd.get("H", 1.0));
+        spStart = sd.get("start", 0.0);
+        spDir = out + "/" + sd.get("dir", std::string("spanStatistics"));
+        if (sd.has("stations"))
+            for (auto& v : sd["stations"].array()) spStations.push_back(v.number());
+    }
+    auto writeSpanStats = [&](bool report) {
+        if (!spStats) return;
+        const auto sr = spStats->write(spDir, spStations);
+        if (report && par::master())
+            std::cout << "spanStatistics: averaged over " << spStats->averagedTime() << ", separation x/H " << sr.first
+                      << ", reattachment x/H " << sr.second << " -> " << spDir << '\n';
+    };
     // 返回 {Cd, Cl, Cm}
     auto sampleForces = [&](scalar t, scalar dt, bool writeRow) -> Vec3 {
         const ForceResult r = fm->f->compute();
@@ -342,9 +365,11 @@ void runCase(const std::string& caseFile) {
             }
             if (fluxReport && n % printInterval == 0) printFluxes();
             if (chStats && flow.time().time >= chStart * (1 - 1e-12)) chStats->sample(dt);
+            if (spStats && flow.time().time >= spStart * (1 - 1e-12)) spStats->sample(dt);
             if (flow.time().time >= nextWrite * (1 - 1e-12)) {
                 if (writeVtk) vtk.write(flow.time().time);
                 if (chStats) chStats->write(chFile);
+                writeSpanStats(true);
                 nextWrite += writeInterval;
             }
         }
@@ -353,6 +378,7 @@ void runCase(const std::string& caseFile) {
     }
     printFluxes();
     writeLines();
+    writeSpanStats(true);
     if (chStats) {
         chStats->write(chFile);
         if (par::master())
