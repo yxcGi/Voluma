@@ -9,6 +9,7 @@
 #include "fvm/io/TecplotWriter.h"
 #include "fvm/io/VtkWriter.h"
 #include "fvm/models/TurbulenceModel.h"
+#include "fvm/post/ChannelStatistics.h"
 #include "fvm/post/Forces.h"
 #include "fvm/solvers/IncompressibleFlow.h"
 
@@ -156,6 +157,20 @@ void runCase(const std::string& caseFile) {
             fm->csv << std::setprecision(10);
         }
     }
+    // 槽道湍流统计（OpenLB channel3d 同格式）：t >= start 后每步按 dt 加权累积，写出时刻与结束时写 CSV
+    std::unique_ptr<ChannelStatistics> chStats;
+    scalar chStart = 0;
+    std::string chFile;
+    if (cfg.has("channelStatistics")) {
+        const Json& cd = cfg["channelStatistics"];
+        // walls：两壁面在法向上的坐标 [y0, y1]
+        const auto& w = cd["walls"].array();
+        if (w.size() != 2) throw std::runtime_error("channelStatistics.walls must be [y0, y1]");
+        chStats = std::make_unique<ChannelStatistics>(flow, int(cd.get("streamwise", 0.0)), int(cd.get("normal", 1.0)),
+                                                      w[0].number(), w[1].number());
+        chStart = cd.get("start", 0.0);
+        chFile = out + "/" + cd.get("file", std::string("channel_stats.csv"));
+    }
     // 返回 {Cd, Cl, Cm}
     auto sampleForces = [&](scalar t, scalar dt, bool writeRow) -> Vec3 {
         const ForceResult r = fm->f->compute();
@@ -274,8 +289,10 @@ void runCase(const std::string& caseFile) {
                 if (n % printInterval == 0) std::cout << "  Cd " << c.x << "  Cl " << c.y << '\n';
             }
             if (fluxReport && n % printInterval == 0) printFluxes();
+            if (chStats && flow.time().time >= chStart * (1 - 1e-12)) chStats->sample(dt);
             if (flow.time().time >= nextWrite * (1 - 1e-12)) {
                 if (writeVtk) vtk.write(flow.time().time);
+                if (chStats) chStats->write(chFile);
                 nextWrite += writeInterval;
             }
         }
@@ -284,6 +301,12 @@ void runCase(const std::string& caseFile) {
     }
     printFluxes();
     writeLines();
+    if (chStats) {
+        chStats->write(chFile);
+        if (par::master())
+            std::cout << "channelStatistics: averaged over " << chStats->averagedTime() << ", u_tau " << chStats->uTau()
+                      << " -> " << chFile << '\n';
+    }
     if (fm) {
         const Vec3 c = sampleForces(flow.time().time, 0.0, false);
         std::cout << "forces: final Cd " << c.x << "  Cl " << c.y << "  Cm " << c.z << '\n';

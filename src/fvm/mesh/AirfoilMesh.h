@@ -27,6 +27,7 @@ struct AirfoilMeshSpec {
     int nWake = 120;           // 每侧尾迹方向单元数
     int nNormal = 120;         // 法向单元数
     scalar firstCell = 1e-3;   // 壁面首层高度（弦长倍数）
+    scalar wakeGrowth = 0.002; // 尾迹割线处首层高度随离后缘距离线性增大：firstCell + wakeGrowth·Δx（远尾迹不必贴壁级加密）
     int smoothIter = 0;        // 内部拉普拉斯光顺次数（靠壁若干层不动），默认不光顺
     scalar depth = 0.1;        // 展向厚度（二维）
 };

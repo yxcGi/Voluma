@@ -172,7 +172,8 @@ RawMesh generateAirfoilCMesh(const AirfoilMeshSpec& s) {
         const Vec3 d = B[i] - S[i];
         const scalar L = mag(d);
         constexpr scalar kT = 0.5;  // 壁面切向量长度系数：越大网格线离壁越"直"，越小越贴近直线插值
-        const TanhStretch st(s.firstCell * c / (kT * L), nj);
+        const scalar dxWake = (i < iTElo || i > iTEup) ? std::abs(S[i].x - te.x) : 0.0;
+        const TanhStretch st((s.firstCell * c + s.wakeGrowth * dxWake) / (kT * L), nj);
         const Vec3 T0 = kT * L * nrm[i], T1 = d;
         for (int j = 0; j <= nj; ++j) {
             const scalar t = st(scalar(j) / nj);

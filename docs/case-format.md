@@ -32,7 +32,8 @@ mpirun -np 8 fvmFlow cases/pitzDaily/case.json
 "mesh": { "airfoil": {                                          // 内置 NACA 四位数翼型二维 C 型网格
     "naca": "0012", "alpha": 4,         // 攻角：翼型绕半弦点旋转，来流保持 +x
     "upstream": 6.5, "downstream": 12.5, "halfHeight": 6,       // 半弦点到入口/出口/上下边界的距离（弦长倍数）
-    "nAirfoil": 300, "nWake": 120, "nNormal": 120, "firstCell": 1e-3, "depth": 0.1
+    "nAirfoil": 300, "nWake": 120, "nNormal": 120, "firstCell": 1e-3, "depth": 0.1,
+    "wakeGrowth": 0.002                 // 尾迹割线处首层高度 = firstCell + wakeGrowth × 离后缘距离
 } }                                     // 边界：airfoil（wall）、inlet、outlet、top、bottom
 ```
 
@@ -149,6 +150,25 @@ preconditioner 可选 `GAMG`、`DIC`/`DILU`、`diagonal`、`none`。
 
 输出 `output/forces.csv`（t, Cd, Cl, Cm 及压力/粘性分量、力 Fx Fy Fz），结束时打印平均 Cd、Cl、Cm，
 并写 `output/surface.csv`（壁面面心坐标、法向、Cp、壁面切应力、Cf）。Cp = (p − pRef)/(½U²)，Cf 为切应力沿 dragDir 的分量 /(½U²)。
+
+## channelStatistics（仅 fvmFlow）
+
+槽道湍流统计，输出格式与 OpenLB `channel3d` 算例相同，可直接与其结果及 Lee & Moser DNS 对比：
+
+```jsonc
+"channelStatistics": {
+  "streamwise": 0,                      // 流向坐标轴（0/1/2）
+  "normal": 2,                          // 壁面法向坐标轴；展向为剩下的轴
+  "walls": [0, 2],                      // 两壁面在法向上的坐标
+  "start": 2500,                        // 从该时刻起做时间 + 平面平均
+  "file": "channel_stats.csv"
+}
+```
+
+每个写出时刻和结束时写 `output/channel_stats.csv`（分号分隔）：
+`y+;u_tau;uAv+;uu++;uv++;uw++;vv++;vw++;ww++;pRMS;uu_sgs++;…;ww_sgs++`。
+u、v、w 依次为流向、展向、法向分量；上下两半按到最近壁面的距离合并；u_τ 由壁面平均切应力（含壁模型的 ν_eff）
+的时间平均得到；亚格子应力为 −2ν_t S_ij。
 
 ## turbulence（仅 fvmFlow）
 

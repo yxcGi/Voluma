@@ -1,0 +1,21 @@
+// NACA0012，Re = U c / ν = 1000，二维瞬态（与 OpenLB examples/my_examples/airfoil2d 同设置）
+//   计算域 19c × 12c，半弦点距入口 6.5c、距出口 12.5c、距上下边界 6c；攻角通过旋转翼型实现，来流沿 +x
+//   零初值，入口速度 2 个流过时间内 smoothstep 缓启动；共 25 个流过时间，t > 12.5 做时间平均
+//   上下边界取来流（U = 来流并同样缓启动、p 零梯度）。OpenLB 上下用对流出流边界（BC_MODE 1）；
+//   这里试过开边界（U 零梯度、p = 0），入口来流会从上下边界大量流出，改用来流边界更稳定
+// 换攻角：改 mesh.airfoil.alpha
+{
+  "mesh": { "airfoil": { "naca": "0012", "alpha": 0, "upstream": 6.5, "downstream": 12.5, "halfHeight": 6,
+                         "nAirfoil": 300, "nWake": 120, "nNormal": 120, "firstCell": 1e-3, "depth": 0.1 } },
+  "physics": { "nu": 1e-3, "steady": false },
+  "schemes": { "div": "linearUpwind", "ddt": "backward" },
+  "solution": { "nOuter": 1, "nCorr": 2, "nNonOrthCorr": 1 },
+  "boundary": {
+    "inlet":  { "U": { "type": "fixedValue", "value": [1, 0, 0], "ramp": { "duration": 2 } }, "p": { "type": "zeroGradient" } },
+    "outlet": { "U": { "type": "zeroGradient" }, "p": { "type": "fixedValue", "value": 0 } },
+    "top":    { "U": { "type": "fixedValue", "value": [1, 0, 0], "ramp": { "duration": 2 } }, "p": { "type": "zeroGradient" } },
+    "bottom": { "U": { "type": "fixedValue", "value": [1, 0, 0], "ramp": { "duration": 2 } }, "p": { "type": "zeroGradient" } }
+  },
+  "run": { "endTime": 25, "maxCo": 1.0, "maxDt": 0.01, "writeInterval": 5, "output": "output", "printInterval": 200 },
+  "forces": { "patches": ["airfoil"], "Uref": 1, "lRef": 1, "CofR": [0.25, 0, 0], "averageStart": 12.5, "interval": 10 }
+}

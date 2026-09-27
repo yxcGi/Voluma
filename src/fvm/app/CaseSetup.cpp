@@ -74,6 +74,7 @@ MeshPtr buildMesh(const Json& d, const std::string& caseDir) {
             s.nWake = a.get("nWake", s.nWake);
             s.nNormal = a.get("nNormal", s.nNormal);
             s.firstCell = a.get("firstCell", s.firstCell);
+            s.wakeGrowth = a.get("wakeGrowth", s.wakeGrowth);
             s.smoothIter = a.get("smoothIter", s.smoothIter);
             s.depth = a.get("depth", s.depth);
             raw = generateAirfoilCMesh(s);

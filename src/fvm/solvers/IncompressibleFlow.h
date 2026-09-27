@@ -78,6 +78,7 @@ public:
     // 以及可选的壁面面上 ν_eff 覆盖（壁函数用），在每个外迭代开始前调用
     std::function<void(IncompressibleFlow&)> updateTurbulence;
     std::vector<scalar>& nut() { return nut_; }
+    const std::vector<scalar>& nut() const { return nut_; }
     // 壁面面上的有效粘度覆盖（边界面编号 → ν_eff），为空表示不覆盖
     std::vector<scalar>& wallNuEff() { return wallNuEff_; }
 
