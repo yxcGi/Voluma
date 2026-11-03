@@ -158,9 +158,14 @@ StepInfo IncompressibleFlow::step(scalar dt) {
             M -= ngp;
             auto perf = M.solve(ctl.UControls, ctl.verbose);
             if (outer == 0 && !perf.empty()) {
-                scalar r = 0;
-                for (auto& pf : perf) r = std::max(r, pf.initialResidual);
-                info.UInitialResidual = r;
+                // 监控残差：各分量的 Σ|b − A x| 都除以分量中最大的归一化因子（Fluent 式按速度模归一），
+                // 否则恒为零的分量（如周期管的横向速度）会得到噪声/噪声 ≈ O(1) 的伪残差
+                scalar r = 0, nf = 0;
+                for (auto& pf : perf) {
+                    r = std::max(r, pf.residualSum);
+                    nf = std::max(nf, pf.normFactor);
+                }
+                info.UInitialResidual = r / (nf + 1e-30);
             }
             info.perf.insert(info.perf.end(), perf.begin(), perf.end());
         }
@@ -219,7 +224,14 @@ StepInfo IncompressibleFlow::step(scalar dt) {
                 pEqn -= divPhi;
                 if (needRef) pEqn.setReference(ctl.pRefCell, ctl.pRefValue);
                 auto perf = pEqn.solve((finalCorr && finalNO) ? ctl.pFinalControls : ctl.pControls, ctl.verbose);
-                if (outer == 0 && corr == 0 && no == 0 && !perf.empty()) info.pInitialResidual = perf[0].initialResidual;
+                if (outer == 0 && corr == 0 && no == 0 && !perf.empty()) {
+                    // 压力恒为常数时（周期域体力驱动）归一化因子趋于零，改用前几步的因子作下限
+                    if (pNormSteps_ < 5) {
+                        pNormRef_ = std::max(pNormRef_, perf[0].normFactor);
+                        ++pNormSteps_;
+                    }
+                    info.pInitialResidual = perf[0].residualSum / (std::max(perf[0].normFactor, pNormRef_) + 1e-30);
+                }
                 info.perf.insert(info.perf.end(), perf.begin(), perf.end());
                 if (finalNO) {
                     const auto F = pEqn.flux();

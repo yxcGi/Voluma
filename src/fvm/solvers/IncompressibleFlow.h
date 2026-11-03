@@ -115,6 +115,8 @@ private:
     std::vector<scalar> nut_, wallNuEff_;
     std::vector<scalar> rAU_;
     std::vector<Tensor> gradU_;
+    scalar pNormRef_ = 0;  // 压力方程监控残差的归一化下限（前 5 步归一化因子的最大值）
+    int pNormSteps_ = 0;
     TimeState ts_;
     bool initialized_ = false;
 };

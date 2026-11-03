@@ -164,7 +164,9 @@ SolverPerformance solveLdu(const LduSystem& s, std::vector<scalar>& x, const Sol
     for (label c = 0; c < n; ++c) nf.add(std::abs(wA[c] - pA[c]) + std::abs(s.b[c] - pA[c]));
     const scalar normFactor = nf.allReduce() + 1e-20;
 
-    perf.initialResidual = gSumMag(rA, n) / normFactor;
+    perf.residualSum = gSumMag(rA, n);
+    perf.normFactor = normFactor;
+    perf.initialResidual = perf.residualSum / normFactor;
     perf.finalResidual = perf.initialResidual;
     if (perf.initialResidual < ctrl.tolerance && ctrl.minIter <= 0) {
         perf.converged = true;

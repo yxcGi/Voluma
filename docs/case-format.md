@@ -30,6 +30,8 @@ mpirun -np 8 fvmFlow cases/pitzDaily/case.json
     "stretch": { "y": 2.0 }             // 双侧 tanh 加密，参数越大越贴壁
 } }
 "mesh": { "periodicHill": { "n": [128, 64, 64], "stretch": 1.5 } }   // 周期山贴体网格（ERCOFTAC 山形，Lx 9H、Ly 4.5H、高 3.036H，下壁 bottom、上壁 top）
+"mesh": { "pipe": { "radius": 0.5, "length": 1, "nCore": 8, "nRing": 8, "nAxial": 16,   // 直圆管蝶形 O 型网格：中央方块 nCore²、
+    "coreFrac": 0.5, "stretch": 0, "periodic": true } }           // 环向块径向 nRing、轴向 nAxial；壁面 wall，两端 cyclic zMin/zMax（periodic=false 时为 inlet/outlet）
 "mesh": { "airfoil": {                                          // 内置 NACA 四位数翼型二维 C 型网格
     "naca": "0012", "alpha": 4,         // 攻角：翼型绕半弦点旋转，来流保持 +x
     "upstream": 6.5, "downstream": 12.5, "halfHeight": 6,       // 半弦点到入口/出口/上下边界的距离（弦长倍数）
@@ -83,6 +85,9 @@ Fluent 按 zone 类型（wall / symmetry / 其余为 patch），都可以用 `pa
 "initial": { "channel": { "Ubulk": 1, "streamwise": 0, "normal": 2, "walls": [0, 2], "amplitude": 0.1, "noise": 0.05 } }
 ```
 
+三维 Taylor-Green 涡初场（周期域 [0, 2πL]³，u = U0 sin(x/L) cos(y/L) cos(z/L)，v = −U0 cos(x/L) sin(y/L) cos(z/L)，
+w = 0，p 为对应的解析压力）：`"initial": { "taylorGreen": { "U0": 1, "L": 1 } }`。
+
 ## schemes
 
 | 键 | 可选值 | 默认 |
@@ -111,6 +116,11 @@ preconditioner 可选 `GAMG`、`DIC`/`DILU`、`diagonal`、`none`。
 
 大时间步（扩散数 νΔt/Δx² 远大于 1）时 PISO 可能不稳定，请增大 `nOuter`（PIMPLE）或 `nCorr`，或限制 `maxDt`。
 
+打印与 `residualTol` 使用的 `U res` / `p res` 是每步第一次线性求解的初始残差 Σ|b − Ax|，归一化方式：
+U 的三个分量共用分量中最大的 OpenFOAM 式归一化因子（相当于按速度模归一，恒为零的分量不会给出噪声残差）；
+p 的归一化因子取当前值与前 5 步最大值中的较大者（压力恒为常数的周期体力驱动流动也能正常收敛判定）。
+`verbose` 打印的各线性求解残差仍是 OpenFOAM 式逐分量归一化值。
+
 ## forcing（仅 fvmFlow）
 
 ```jsonc
@@ -132,6 +142,15 @@ preconditioner 可选 `GAMG`、`DIC`/`DILU`、`diagonal`、`none`。
 | `vtk` / `tecplot` | 是否写 VTK（默认是）/ Tecplot `.dat`（默认否） | |
 | `restartWrite` `restartRead` | 续算文件目录（与进程数无关，可换进程数续算） | |
 | `printFluxes` | 打印时同时列出各边界体积通量（结束时总会列出） | |
+
+## monitor（仅 fvmFlow，瞬态）
+
+```jsonc
+"monitor": { "interval": 1, "file": "monitor.csv" }   // 每隔多少步写一行 output/monitor.csv
+```
+
+列：`t,k,epsilon,epsilon_sgs,enstrophy`，均为体积平均：k = ½⟨|u|²⟩，epsilon = 2ν⟨S:S⟩（解析尺度粘性耗散），
+epsilon_sgs = 2⟨ν_t S:S⟩，enstrophy = ½⟨|ω|²⟩。总耗散 −dk/dt 可由 k(t) 差分得到（`tools/compare_tgv.py`）。
 
 ## probes 与 lines
 

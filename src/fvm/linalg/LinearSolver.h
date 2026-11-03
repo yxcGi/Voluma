@@ -24,7 +24,8 @@ struct SolverControls {
 
 struct SolverPerformance {
     std::string solver, field;
-    scalar initialResidual = 0, finalResidual = 0;
+    scalar initialResidual = 0, finalResidual = 0;  // OpenFOAM 式归一化残差
+    scalar residualSum = 0, normFactor = 0;         // 初始残差 Σ|b − A x| 与归一化因子（供外层做稳定归一化）
     int iterations = 0;
     bool converged = false;
 };
