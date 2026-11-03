@@ -30,3 +30,5 @@ Geometry_Source_Code.md
 # 算例输出
 cases/*/output/
 *.log
+cases/*/log.txt
+cases/*/restart/
