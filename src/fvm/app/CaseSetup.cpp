@@ -1,6 +1,7 @@
 #include "fvm/app/CaseSetup.h"
 
 #include "fvm/mesh/AirfoilMesh.h"
+#include "fvm/mesh/CylinderMesh.h"
 #include "fvm/mesh/PeriodicHill.h"
 #include "fvm/mesh/PipeMesh.h"
 #include "fvm/mesh/MeshReaders.h"
@@ -109,9 +110,25 @@ MeshPtr buildMesh(const Json& d, const std::string& caseDir) {
             s.periodic = a.get("periodic", s.periodic);
             raw = generatePipeMesh(s);
             if (a.has("writePolyMesh")) writePolyMesh(raw, resolvePath(caseDir, a["writePolyMesh"].string()));
+        } else if (d.has("cylinder")) {
+            const Json& a = d["cylinder"];
+            CylinderMeshSpec s;
+            s.D = a.get("D", s.D);
+            s.upstream = a.get("upstream", s.upstream);
+            s.downstream = a.get("downstream", s.downstream);
+            s.halfHeight = a.get("halfHeight", s.halfHeight);
+            s.nTheta = a.get("nTheta", s.nTheta);
+            s.nRadial = a.get("nRadial", s.nRadial);
+            s.nSpan = a.get("nSpan", s.nSpan);
+            s.span = a.get("span", s.span);
+            s.firstCell = a.get("firstCell", s.firstCell);
+            s.twoD = a.get("twoD", s.twoD);
+            if (s.twoD) s.nSpan = 1;
+            raw = generateCylinderOMesh(s);
+            if (a.has("writePolyMesh")) writePolyMesh(raw, resolvePath(caseDir, a["writePolyMesh"].string()));
         } else {
             throw std::runtime_error(
-                "mesh: need \"polyMesh\", \"file\", \"box\", \"airfoil\", \"periodicHill\" or \"pipe\"");
+                "mesh: need \"polyMesh\", \"file\", \"box\", \"airfoil\", \"periodicHill\", \"pipe\" or \"cylinder\"");
         }
     } else {
         // 其他进程也要把字典标记为已读，避免误报
@@ -121,6 +138,7 @@ MeshPtr buildMesh(const Json& d, const std::string& caseDir) {
         (void)d["airfoil"];
         (void)d["periodicHill"];
         (void)d["pipe"];
+        (void)d["cylinder"];
     }
     return Mesh::build(par::master() ? &raw : nullptr);
 }
