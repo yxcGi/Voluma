@@ -392,6 +392,7 @@ void runCase(const std::string& caseFile) {
         }
         std::cout << "finished after " << std::min(it, maxIter) << " iterations, " << par::wallTime() - t0 << " s\n";
         if (writeVtk) vtk.write(std::min(it, maxIter));
+        if (spStats) spStats->sample(1.0);  // 稳态：收敛解本身就是统计量
     } else {
         const scalar endTime = run["endTime"].number();
         const scalar maxCo = run.get("maxCo", 0.0);  // >0：按库朗数自适应步长

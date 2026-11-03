@@ -1,0 +1,19 @@
+// 周期山 RANS（k-ω SST，二维定常），Re_b = U_b H/ν = 10595，曲面壁 + 周期 + 非正交网格的 RANS 验证
+//   几何同 cases/periodicHill（ERCOFTAC 山形，Lx 9H，上壁 3.036H）；展向 2 层、宽 0.1H（周期方向至少 2 个单元）；法向 tanh 加密，首层 y+ ≈ 2
+//   从静止起动（均匀初场在山形域内散度很大，SST 第一步会发散）
+//   U_b 定义为山顶截面平均速度 = 1 → 体平均 0.72104（见 cases/periodicHill）
+//   参考（Breuer 等 2009 LES / Rapp 2009 实验）：分离 x/H ≈ 0.19–0.20，再附 x/H ≈ 4.56–4.72；
+//   RANS 两方程模型普遍把再附点算远（文献中 SST 约 x/H 5.5–7），此处作为定性检验与后续 LES 的对照
+//   输出：output/hill/wall_bottom.csv（Cf、Cp）与各站位剖面；结束时打印分离/再附点
+{
+  "mesh": { "periodicHill": { "n": [160, 2, 80], "span": 0.1, "stretch": 3.0 } },
+  "physics": { "nu": 9.438414346389806e-5, "steady": true },
+  "forcing": { "type": "meanVelocity", "Ubar": [0.72104, 0, 0] },
+  "turbulence": { "model": "kOmegaSST", "wallFunctions": true, "div": "limitedLinear 1" },
+  "initial": { "U": [0, 0, 0], "k": 1e-4, "omega": 100 },
+  "schemes": { "div": "linearUpwind" },
+  "solution": { "nNonOrthCorr": 1 },
+  "run": { "maxIter": 15000, "residualTol": 1e-6, "printInterval": 500, "vtk": true },
+  "spanStatistics": { "streamwise": 0, "normal": 2, "wall": "bottom", "Uref": 1, "H": 1, "start": 0, "dir": "hill",
+                      "stations": [0.05, 0.5, 1, 2, 3, 4, 5, 6, 7, 8] }
+}

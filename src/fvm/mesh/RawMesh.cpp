@@ -389,6 +389,10 @@ std::function<scalar(scalar)> tanhStretch(scalar beta) {
 }
 
 RawMesh generateBox(const BoxSpec& s) {
+    for (int d = 0; d < 3; ++d)
+        if (s.periodic[d] && s.n[d] < 2 && !(d == 2 && s.twoD))
+            throw std::runtime_error("box: a periodic direction needs at least 2 cells (a single cell would be "
+                                     "coupled to itself through the cyclic faces)");
     const int nx = s.n[0], ny = s.n[1], nz = s.n[2];
     if (nx < 1 || ny < 1 || nz < 1) throw std::invalid_argument("generateBox: bad resolution");
     if (s.twoD && nz != 1) throw std::invalid_argument("generateBox: twoD requires n[2]==1");
