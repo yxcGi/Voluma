@@ -1,0 +1,22 @@
+// 二维圆柱绕流，Re = U D/ν = 40（定常对称回流区），层流外流 + 曲面壁验证
+//   O 型网格：直径 D = 1，圆心在原点；入口 40D、出口 60D、上下 ±40D（阻塞比 1.25%；±15D 时 Cd 偏高 3%）；首层 0.01D
+//   参考：Dennis & Chang 1970 Cd 1.522 / L_w 2.35；Fornberg 1980 Cd 1.498 / L_w 2.24；
+//        Linnick & Fasel 2005 Cd 1.54 / L_w 2.28 / θ_sep 53.6°；Taira & Colonius 2007 Cd 1.54 / L_w 2.30 / θ_sep 53.7°
+//   对比：python3 tools/compare_cylinder_laminar.py output --re 40
+{
+  "mesh": { "cylinder": { "nTheta": 192, "nRadial": 110, "firstCell": 0.01, "upstream": 40, "downstream": 60, "halfHeight": 40,
+                          "twoD": true } },
+  "physics": { "nu": 0.025, "steady": true },
+  "initial": { "U": [1, 0, 0] },
+  "schemes": { "div": "linearUpwind" },
+  "solution": { "nNonOrthCorr": 1 },
+  "boundary": {
+    "inlet":  { "U": { "type": "fixedValue", "value": [1, 0, 0] }, "p": { "type": "zeroGradient" } },
+    "outlet": { "U": { "type": "zeroGradient" }, "p": { "type": "fixedValue", "value": 0 } },
+    "top":    { "U": { "type": "slip" }, "p": { "type": "zeroGradient" } },
+    "bottom": { "U": { "type": "slip" }, "p": { "type": "zeroGradient" } }
+  },
+  "run": { "maxIter": 6000, "residualTol": 1e-7, "printInterval": 200, "vtk": false },
+  "forces": { "patches": ["cylinder"], "Uref": 1, "lRef": 1, "CofR": [0, 0, 0], "interval": 100 },
+  "lines": [ { "name": "wake", "start": [0.5, 0, 0], "end": [6, 0, 0], "n": 551 } ]
+}

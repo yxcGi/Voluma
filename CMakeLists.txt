@@ -47,3 +47,23 @@ foreach(src ${FVM_TESTS})
              $<TARGET_FILE:${name}> WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
   endif()
 endforeach()
+
+# 算例回归测试：运行小算例并用 tools/compare_*.py 按容差核对（需要 python3；圆柱、TGV 需要 numpy）
+find_package(Python3 COMPONENTS Interpreter)
+if(Python3_Interpreter_FOUND)
+  set(FVM_CHECK ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/check_case.py --exe $<TARGET_FILE:fvmFlow>)
+  set(FVM_MPI_ARGS "")
+  if(FVM_USE_MPI)
+    set(FVM_MPI_ARGS --np 2 --mpiexec ${MPIEXEC_EXECUTABLE})
+  endif()
+  add_test(NAME case_pipe_laminar COMMAND ${FVM_CHECK} --case ${CMAKE_SOURCE_DIR}/cases/pipe/case.json
+           --workdir ${CMAKE_BINARY_DIR}/cases/pipe ${FVM_MPI_ARGS}
+           -- ${CMAKE_SOURCE_DIR}/tools/compare_pipe.py OUTPUT --tol 1.5)
+  add_test(NAME case_cylinder_re40 COMMAND ${FVM_CHECK} --case ${CMAKE_SOURCE_DIR}/cases/cylinderRe40/case.json
+           --workdir ${CMAKE_BINARY_DIR}/cases/cylinderRe40 ${FVM_MPI_ARGS}
+           -- ${CMAKE_SOURCE_DIR}/tools/compare_cylinder_laminar.py OUTPUT --re 40 --check)
+  add_test(NAME case_tgv3d_32 COMMAND ${FVM_CHECK} --case ${CMAKE_SOURCE_DIR}/cases/tgv3d/case32.json
+           --workdir ${CMAKE_BINARY_DIR}/cases/tgv3d ${FVM_MPI_ARGS}
+           -- ${CMAKE_SOURCE_DIR}/tools/compare_tgv.py OUTPUT/monitor.csv --check 30)
+  set_tests_properties(case_pipe_laminar case_cylinder_re40 case_tgv3d_32 PROPERTIES LABELS "case" TIMEOUT 1200)
+endif()

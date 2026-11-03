@@ -37,6 +37,7 @@ def main():
     ap.add_argument('--out')
     ap.add_argument('--labels')
     ap.add_argument('--tmax', type=float, default=20.0)
+    ap.add_argument('--check', type=float, help='−dk/dt 峰值与 DNS 的相对误差容差（%%）且峰值时刻在 7.5~10.5；失败退出码 1')
     a = ap.parse_args()
     ref = read_ref(a.ref)
     labels = a.labels.split(',') if a.labels else [os.path.relpath(f) for f in a.files]
@@ -60,6 +61,12 @@ def main():
               f"resolved+sgs eps peak {tot[sel][ipr]:.5f} at t = {t[sel][ipr]:.2f}; "
               f"L2 err -dk/dt {100 * l2e:.1f}%, k {100 * l2k:.1f}%")
         series.append((label, t, k, dkdt, m['epsilon'], m['epsilon_sgs']))
+        if a.check is not None:
+            dev = 100 * abs(dkdt[sel][ip] / ref['eps_t'][ipk] - 1)
+            ok = dev <= a.check and 7.5 <= t[sel][ip] <= 10.5
+            print('PASS' if ok else f'FAIL: peak deviation {dev:.1f}% > {a.check}% or peak time outside 7.5-10.5')
+            if not ok:
+                raise SystemExit(1)
     if a.out:
         import matplotlib
         matplotlib.use('Agg')

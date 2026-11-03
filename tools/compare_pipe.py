@@ -18,6 +18,7 @@ def main():
     ap.add_argument('--R', type=float, default=0.5)
     ap.add_argument('--Ub', type=float, default=1.0)
     ap.add_argument('--axis', type=int, default=2, help='轴向坐标分量（0/1/2）')
+    ap.add_argument('--tol', type=float, help='最大误差容差（%%），超过时退出码 1（回归测试用）')
     a = ap.parse_args()
     umax = 2 * a.Ub
     worst = 0.0
@@ -43,6 +44,11 @@ def main():
         print(f'{os.path.basename(path)}: {len(errs)} cells, max |err| {100 * mx:.3f}%  rms {100 * rms:.3f}%  '
               f'(r={centre[0]:.3f}: u={centre[1]:.4f}, exact {centre[2]:.4f})')
     print(f'worst max error {100 * worst:.3f}% of centreline velocity')
+    if a.tol is not None and 100 * worst > a.tol:
+        print(f'FAIL: exceeds tolerance {a.tol}%')
+        raise SystemExit(1)
+    if a.tol is not None:
+        print('PASS')
 
 
 if __name__ == '__main__':

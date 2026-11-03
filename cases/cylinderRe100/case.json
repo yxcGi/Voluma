@@ -1,0 +1,21 @@
+// 二维圆柱绕流，Re = U D/ν = 100（卡门涡街），层流外流 + 曲面壁的非定常验证
+//   网格与 Re 40 算例相同；从均匀流起动，t > 100 统计（约 8 个脱落周期），共 150 D/U
+//   参考：Williamson 1996 实验 St 0.164；Linnick & Fasel 2005 Cd 1.34±0.009、Cl ±0.333、St 0.166；
+//        Taira & Colonius 2007 Cd 1.35±0.012、Cl ±0.30、St 0.165；Henderson 1995 Cd 1.350
+//   对比：python3 tools/compare_cylinder_laminar.py output --re 100
+{
+  "mesh": { "cylinder": { "nTheta": 128, "nRadial": 110, "firstCell": 0.01, "upstream": 40, "downstream": 60, "halfHeight": 40,
+                          "twoD": true } },
+  "physics": { "nu": 0.01, "steady": false },
+  "initial": { "U": [1, 0, 0], "noise": 0.01 },
+  "schemes": { "div": "linear", "ddt": "backward" },
+  "solution": { "nOuter": 1, "nCorr": 2, "nNonOrthCorr": 1 },
+  "boundary": {
+    "inlet":  { "U": { "type": "fixedValue", "value": [1, 0, 0] }, "p": { "type": "zeroGradient" } },
+    "outlet": { "U": { "type": "zeroGradient" }, "p": { "type": "fixedValue", "value": 0 } },
+    "top":    { "U": { "type": "slip" }, "p": { "type": "zeroGradient" } },
+    "bottom": { "U": { "type": "slip" }, "p": { "type": "zeroGradient" } }
+  },
+  "run": { "endTime": 150, "dt": 0.01, "printInterval": 500, "vtk": false },
+  "forces": { "patches": ["cylinder"], "Uref": 1, "lRef": 1, "CofR": [0, 0, 0], "averageStart": 100, "interval": 5 }
+}
