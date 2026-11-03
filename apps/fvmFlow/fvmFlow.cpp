@@ -73,6 +73,61 @@ static void initChannelFlow(IncompressibleFlow& flow, const Json& d) {
 }
 
 
+// Taylor-Green 涡初场（三维，周期域 [0, 2πL]³）：
+//   u = U0 sin(x/L) cos(y/L) cos(z/L)，v = −U0 cos(x/L) sin(y/L) cos(z/L)，w = 0，
+//   p = p0 + U0²/16 (cos(2x/L) + cos(2y/L)) (cos(2z/L) + 2)
+static void initTaylorGreen(IncompressibleFlow& flow, const Json& d) {
+    const Mesh& m = flow.mesh();
+    const scalar U0 = d.get("U0", 1.0), L = d.get("L", 1.0), p0 = d.get("p0", 0.0);
+    auto& U = flow.U();
+    auto& p = flow.p();
+    for (label c = 0; c < m.nCells(); ++c) {
+        const Vec3& x = m.C()[c];
+        U[c] = {U0 * std::sin(x.x / L) * std::cos(x.y / L) * std::cos(x.z / L),
+                -U0 * std::cos(x.x / L) * std::sin(x.y / L) * std::cos(x.z / L), 0.0};
+        p[c] = p0 + U0 * U0 / 16 * (std::cos(2 * x.x / L) + std::cos(2 * x.y / L)) * (std::cos(2 * x.z / L) + 2);
+    }
+    U.correctBoundaryConditions();
+    p.correctBoundaryConditions();
+}
+
+// 全域监控量（体积平均）：动能 k = ½<|u|²>，粘性耗散 ε = 2ν<S:S>，亚格子耗散 2<ν_t S:S>，拟涡能 ½<|ω|²>
+struct Monitor {
+    IncompressibleFlow& flow;
+    std::ofstream file;
+    int interval = 1;
+    Monitor(IncompressibleFlow& f, const std::string& path, int iv) : flow(f), interval(iv) {
+        if (par::master()) {
+            file.open(path);
+            file << "t,k,epsilon,epsilon_sgs,enstrophy\n" << std::setprecision(10);
+        }
+    }
+    void sample(scalar t) {
+        const Mesh& m = flow.mesh();
+        flow.updateGradU();
+        const auto& G = flow.gradU();
+        const auto& U = flow.U();
+        const auto& nut = flow.nut();
+        par::SumAcc s[4];
+        for (label c = 0; c < m.nCells(); ++c) {
+            const scalar V = m.V()[c];
+            const Tensor S = symm(G[c]);
+            const Vec3 w{G[c](2, 1) - G[c](1, 2), G[c](0, 2) - G[c](2, 0), G[c](1, 0) - G[c](0, 1)};
+            s[0].add(0.5 * magSqr(U[c]) * V);
+            s[1].add(2 * flow.nu() * magSqr(S) * V);
+            s[2].add(2 * (nut.empty() ? 0.0 : nut[c]) * magSqr(S) * V);
+            s[3].add(0.5 * magSqr(w) * V);
+        }
+        double r[4];
+        par::SumAcc::allReduce(s, 4, r);
+        if (par::master()) {
+            file << t;
+            for (double v : r) file << ',' << v / m.totalVolume();
+            file << '\n' << std::flush;
+        }
+    }
+};
+
 namespace {
 
 void runCase(const std::string& caseFile) {
@@ -138,6 +193,7 @@ void runCase(const std::string& caseFile) {
     flow.U().setUniform(ini.get("U", Vec3{0, 0, 0}));
     flow.p().setUniform(ini.get("p", 0.0));
     if (ini.has("channel")) initChannelFlow(flow, ini["channel"]);
+    if (ini.has("taylorGreen")) initTaylorGreen(flow, ini["taylorGreen"]);
     flow.initialize();
 
     // 湍流模型（缺省为层流）
@@ -165,6 +221,13 @@ void runCase(const std::string& caseFile) {
     }
     const bool writeVtk = run.get("vtk", true);
 
+    std::unique_ptr<Monitor> monitor;
+    if (cfg.has("monitor")) {
+        const Json& mo = cfg["monitor"];
+        monitor = std::make_unique<Monitor>(flow, out + "/" + mo.get("file", std::string("monitor.csv")),
+                                            int(mo.get("interval", 1.0)));
+        monitor->sample(flow.time().time);
+    }
     std::unique_ptr<Probes> probes;
     int probeInterval = 1;
     if (cfg.has("probes")) {
@@ -358,6 +421,7 @@ void runCase(const std::string& caseFile) {
                 std::cout << "t " << flow.time().time << "  dt " << dt << "  Co " << info.maxCo << "  cont "
                           << info.continuityError << '\n';
             if (probes && n % probeInterval == 0) probes->sample(flow.time().time);
+            if (monitor && n % monitor->interval == 0) monitor->sample(flow.time().time);
             if (fm) {
                 // 平均每步都累积（与采样间隔无关），写行按 interval
                 const Vec3 c = sampleForces(flow.time().time, dt, n % fm->interval == 0);

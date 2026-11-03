@@ -1,0 +1,13 @@
+// 三维 Taylor-Green 涡，Re = U0 L/ν = 1600（LES 核心验证，与 Dairay 等 2017 的 512³ DNS 对比，见 reference/）
+//   周期域 (2π)³，U0 = 1，L = 1，ν = 1/1600；默认 64³ 不加模型（隐式 LES）；换 turbulence.model 为 Smagorinsky / WALE
+//   总耗散 −dk/dt 的 DNS 峰值约 0.0126（t ≈ 9.1）。对比：python3 tools/compare_tgv.py output/monitor.csv --out tgv.png
+{
+  "mesh": { "box": { "n": [64, 64, 64], "lo": [0, 0, 0], "hi": [6.283185307179586, 6.283185307179586, 6.283185307179586],
+                     "periodic": [true, true, true] } },
+  "physics": { "nu": 6.25e-4, "steady": false },
+  "initial": { "taylorGreen": { "U0": 1, "L": 1 } },
+  "schemes": { "div": "linear", "ddt": "backward" },
+  "solution": { "nOuter": 1, "nCorr": 2, "nNonOrthCorr": 0 },
+  "run": { "endTime": 20, "dt": 0.01, "printInterval": 200, "vtk": false },
+  "monitor": { "interval": 1 }
+}
