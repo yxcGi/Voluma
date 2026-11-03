@@ -109,8 +109,14 @@ public:
     std::vector<scalar>& phiOld() { return phiOld_; }
     std::vector<scalar>& phiOldOld() { return phiOldOld_; }
 
+    // 边界条件用的运行时数据（通量、速度、时间步；压力方程组装期间另有 φ_HbyA 与 rAU_f）
+    BCContext& context() { return ctx_; }
+    const BCContext& context() const { return ctx_; }
+
 private:
     bool pressureNeedsReference() const;
+    // fixedFluxPressure 边界：按 φ_HbyA 与边界速度设定压力法向梯度
+    void constrainPressure(const std::vector<scalar>& phiHbyA, const std::vector<scalar>& rAUf);
     void applyForcingCorrection(const std::vector<scalar>& rAU, scalar ddtCoeff, scalar alphaU);
 
     MeshPtr mesh_;
@@ -125,6 +131,7 @@ private:
     scalar pNormRef_ = 0;  // 压力方程监控残差的归一化下限（前 5 步归一化因子的最大值）
     int pNormSteps_ = 0;
     TimeState ts_;
+    BCContext ctx_;
     bool initialized_ = false;
 };
 

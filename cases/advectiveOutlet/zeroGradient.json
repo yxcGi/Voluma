@@ -1,0 +1,15 @@
+// 同 case.json，出口改为零梯度（对照）
+{
+  "mesh": { "box": { "n": [200, 1, 1], "hi": [2, 0.01, 0.01], "twoD": true, "names": { "xMin": "inlet", "xMax": "outlet" } } },
+  "physics": { "field": "T", "diffusivity": 0.01, "velocity": [1, 0, 0], "steady": false },
+  "boundary": {
+    "inlet":  { "T": { "type": "fixedValue", "value": 0 } },
+    "outlet": { "T": { "type": "zeroGradient" } },
+    "yMin":   { "T": { "type": "zeroGradient" } },
+    "yMax":   { "T": { "type": "zeroGradient" } }
+  },
+  "initial": { "T": 0, "gaussian": { "center": [0.5, 0.005, 0.005], "sigma": 0.1, "amplitude": 1 } },
+  "schemes": { "div": "linear", "ddt": "backward" },
+  "run": { "endTime": 1.8, "dt": 0.0025, "vtk": false },
+  "lines": [ { "name": "centre", "start": [0, 0.005, 0.005], "end": [2, 0.005, 0.005], "n": 200 } ]
+}

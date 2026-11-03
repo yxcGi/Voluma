@@ -1,0 +1,18 @@
+// 二维槽道进出口层流（Re_h = U_b h/ν = 20）：入口给抛物线剖面，出口定压 + 防回流（inletOutlet）
+//   解析解：u(y) = 6 U_b y (1 − y)，dp/dx = −12 ν U_b/h² = −0.6；二阶格式在均匀网格上应精确再现
+//   对比：python3 tools/compare_channel_inlet.py output --mode poiseuille --nu 0.05
+{
+  "mesh": { "box": { "n": [80, 20, 1], "hi": [4, 1, 0.1], "twoD": true, "walls": ["yMin", "yMax"],
+                     "names": { "xMin": "inlet", "xMax": "outlet" } } },
+  "physics": { "nu": 0.05, "steady": true },
+  "boundary": {
+    "inlet":  { "U": { "type": "fixedValue", "parabolic": { "Ubulk": 1, "halfWidth": 0.5, "axis": [0, 1, 0] } },
+                "p": { "type": "zeroGradient" } },
+    "outlet": { "U": { "type": "inletOutlet", "inletValue": [0, 0, 0] }, "p": { "type": "fixedValue", "value": 0 } }
+  },
+  "initial": { "U": [1, 0, 0] },
+  "schemes": { "div": "linear" },
+  "run": { "maxIter": 4000, "residualTol": 1e-9, "printInterval": 200, "vtk": false, "printFluxes": true },
+  "lines": [ { "name": "outlet", "start": [3.975, 0, 0.05], "end": [3.975, 1, 0.05], "n": 20 },
+             { "name": "centre", "start": [0, 0.525, 0.05], "end": [4, 0.525, 0.05], "n": 80 } ]
+}

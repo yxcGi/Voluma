@@ -1,0 +1,17 @@
+// 流量入口（均匀入流 Q = U_b h d = 0.1）→ 下游发展为 Poiseuille 剖面（发展长度 ≈ 0.05 Re_h h = 1）
+//   出口定压 + inletOutlet；检查出口中心速度 1.5 U_b、进出口流量守恒
+//   对比：python3 tools/compare_channel_inlet.py output --mode developed
+{
+  "mesh": { "box": { "n": [120, 24, 1], "hi": [6, 1, 0.1], "twoD": true, "walls": ["yMin", "yMax"],
+                     "names": { "xMin": "inlet", "xMax": "outlet" } } },
+  "physics": { "nu": 0.05, "steady": true },
+  "boundary": {
+    "inlet":  { "U": { "type": "flowRateInlet", "volumetricFlowRate": 0.1 }, "p": { "type": "zeroGradient" } },
+    "outlet": { "U": { "type": "inletOutlet", "inletValue": [0, 0, 0] }, "p": { "type": "fixedValue", "value": 0 } }
+  },
+  "initial": { "U": [1, 0, 0] },
+  "schemes": { "div": "linearUpwind" },
+  "run": { "maxIter": 4000, "residualTol": 1e-8, "printInterval": 200, "vtk": false, "printFluxes": true },
+  "lines": [ { "name": "outlet", "start": [5.975, 0, 0.05], "end": [5.975, 1, 0.05], "n": 24 },
+             { "name": "centre", "start": [0, 0.5208333, 0.05], "end": [6, 0.5208333, 0.05], "n": 120 } ]
+}

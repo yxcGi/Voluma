@@ -11,26 +11,9 @@ namespace cfd::fvm {
 
 // ------------------------------------------------------------------ ddt
 // Euler:    V(ψ − ψ⁰)/Δt
-// backward: V(c ψ − c0 ψ⁰ + c00 ψ⁰⁰)/Δt（变步长 BDF2），首步退化为 Euler
-struct DdtCoeffs {
-    scalar c = 0, c0 = 0, c00 = 0;  // 已除以 Δt
-};
-inline DdtCoeffs ddtCoeffs(DdtScheme s, const TimeState& ts, bool haveOldOld) {
-    DdtCoeffs k;
-    if (s == DdtScheme::Steady) return k;
-    const scalar rDt = 1.0 / ts.dt;
-    if (s == DdtScheme::Backward && haveOldOld && ts.dt0 > 0) {
-        const scalar dt = ts.dt, dt0 = ts.dt0;
-        const scalar ct = 1.0 + dt / (dt + dt0);
-        const scalar ct00 = dt * dt / (dt0 * (dt + dt0));
-        k.c = ct * rDt;
-        k.c0 = (ct + ct00) * rDt;
-        k.c00 = ct00 * rDt;
-    } else {
-        k.c = k.c0 = rDt;
-    }
-    return k;
-}
+// backward: V(c ψ − c0 ψ⁰ + c00 ψ⁰⁰)/Δt（变步长 BDF2），首步退化为 Euler；系数见 Schemes.h 的 ddtCoeffs
+using cfd::DdtCoeffs;
+using cfd::ddtCoeffs;
 
 template <class T> FvMatrix<T> ddt(VolField<T>& psi, DdtScheme s, const TimeState& ts) {
     FvMatrix<T> M(psi);

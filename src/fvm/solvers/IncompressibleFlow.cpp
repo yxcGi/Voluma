@@ -7,7 +7,26 @@
 namespace cfd {
 
 IncompressibleFlow::IncompressibleFlow(MeshPtr mesh, scalar nu)
-    : mesh_(std::move(mesh)), nu_(nu), U_(mesh_, "U"), p_(mesh_, "p"), phi_(mesh_->nFaces(), 0.0) {}
+    : mesh_(std::move(mesh)), nu_(nu), U_(mesh_, "U"), p_(mesh_, "p"), phi_(mesh_->nFaces(), 0.0) {
+    ctx_.phi = &phi_;
+    ctx_.U = &U_;
+    ctx_.time = &ts_;
+    ctx_.nu = nu_;
+}
+
+void IncompressibleFlow::constrainPressure(const std::vector<scalar>& phiHbyA, const std::vector<scalar>& rAUf) {
+    const Mesh& m = *mesh_;
+    for (label p = 0; p < label(m.patches().size()); ++p) {
+        auto& bc = p_.bc(p);
+        if (bc.type() != "fixedFluxPressure") continue;
+        auto& g = static_cast<FixedFluxPressureBC&>(bc).gradient();
+        const Patch& pt = m.patches()[p];
+        for (label i = 0; i < pt.size; ++i) {
+            const label f = pt.start + i;
+            g[i] = (phiHbyA[f] - dot(U_.bValue(f), m.Sf()[f])) / (m.magSf()[f] * rAUf[f]);
+        }
+    }
+}
 
 void IncompressibleFlow::initialize() {
     U_.updateBCs(ts_.time);
@@ -127,6 +146,7 @@ StepInfo IncompressibleFlow::step(scalar dt) {
     PimpleControls& ctl = controls;
     const bool steady = ctl.steady;
     const DdtScheme ddtS = steady ? DdtScheme::Steady : ddtScheme;
+    ctx_.ddt = ddtS;
 
     // ---------------------------------------------------------- 新时间层
     if (!steady) {
@@ -219,7 +239,7 @@ StepInfo IncompressibleFlow::step(scalar dt) {
             for (label p = 0; p < label(m.patches().size()); ++p) {
                 const Patch& pt = m.patches()[p];
                 const auto& bc = U_.bc(p);
-                const bool extrapolate = !bc.fixesValue() && bc.type() != "symmetry";
+                const bool extrapolate = !bc.fixesFlux();
                 for (label i = 0; i < pt.size; ++i) {
                     const label f = pt.start + i;
                     phiHbyA[f] = extrapolate ? dot(HbyA[m.owner()[f]], m.Sf()[f]) : dot(U_.bValue(f), m.Sf()[f]);
@@ -245,6 +265,9 @@ StepInfo IncompressibleFlow::step(scalar dt) {
                     phiHbyA[f] += rAUf[f] * coupling * dc;
                 }
             }
+            ctx_.phiHbyA = &phiHbyA;
+            ctx_.rAUf = &rAUf;
+            constrainPressure(phiHbyA, rAUf);
             const auto divPhi = fvc::div(m, phiHbyA);
             const std::vector<scalar> pPrev = steady ? p_.internal() : std::vector<scalar>{};
 
@@ -268,6 +291,8 @@ StepInfo IncompressibleFlow::step(scalar dt) {
                     for (label f = 0; f < m.nFaces(); ++f) phi_[f] = phiHbyA[f] - F[f];
                 }
             }
+            ctx_.phiHbyA = nullptr;
+            ctx_.rAUf = nullptr;
             if (steady && ctl.alphaP < 1.0) {
                 for (label c = 0; c < nT; ++c) p_[c] = pPrev[c] + ctl.alphaP * (p_[c] - pPrev[c]);
                 p_.correctBoundaryConditions();

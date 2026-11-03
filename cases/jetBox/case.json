@@ -1,0 +1,16 @@
+// 封闭箱体中的平面射流（Re = U d/ν = 100，d = 0.2）：出口离射流不远，卷吸造成出口局部回流，
+//   检验 inletOutlet 出口的稳健性：回流面上速度取 inletValue（0），运行不发散、总流量守恒。
+//   网格：Gmsh 三角形（mesh.py），左壁分段为 inlet / wall；运行结束打印各边界通量（含回流量）
+{
+  "mesh": { "file": "jetBox.msh", "depth": 0.1 },
+  "physics": { "nu": 2e-3, "steady": false },
+  "boundary": {
+    "inlet":  { "U": { "type": "fixedValue", "value": [1, 0, 0], "ramp": { "duration": 1 } }, "p": { "type": "zeroGradient" } },
+    "outlet": { "U": { "type": "inletOutlet", "inletValue": [0, 0, 0] }, "p": { "type": "fixedValue", "value": 0 } }
+  },
+  "initial": { "U": [0, 0, 0] },
+  "schemes": { "div": "linearUpwind", "ddt": "backward" },
+  "solution": { "nOuter": 1, "nCorr": 2, "nNonOrthCorr": 1 },
+  "run": { "endTime": 20, "maxCo": 0.8, "maxDt": 0.05, "writeInterval": 5, "printInterval": 50, "printFluxes": true },
+  "probes": { "points": [[1.9, 0.5, 0.05], [1.9, 0.1, 0.05], [1.9, 0.9, 0.05]], "interval": 5 }
+}

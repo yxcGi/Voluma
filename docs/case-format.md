@@ -64,21 +64,87 @@ Fluent 按 zone 类型（wall / symmetry / 其余为 patch），都可以用 `pa
 ## boundary
 
 每个 patch 每个场一项。`wall` 类型的 patch 不写时，速度默认无滑移、压力默认零梯度；其余 patch 必须写。
+周期（cyclic）和 empty 边界由网格决定，不需要写。
+
+### 定值类
 
 | type | 参数 | 含义 |
 | --- | --- | --- |
-| `fixedValue` | `value`，可选 `ramp` | 定值（速度写 `[u, v, w]`）；`"ramp": {"duration": 2}` 时在 t∈[0, duration] 内由 0 平滑增到 value（smoothstep 6y⁵−15y⁴+10y³，`"shape": "linear"` 为线性） |
+| `fixedValue` | 值的给法见下 | 定值（速度写 `[u, v, w]`） |
 | `noSlip` | | 速度为零 |
+| `movingWall` | `velocity`（给法同 `value`） | 平动壁面（= 速度 fixedValue，仅为可读性） |
+| `rotatingWall` | `origin` `axis` `omega`（常数或时间表） | 旋转壁面 U = ω (axis × (x − origin))，自动去掉法向分量 |
+| `flowRateInlet` | `volumetricFlowRate` 或 `massFlowRate` + `rho`（常数或时间表） | 均匀法向入流，速度 = Q / patch 总面积，方向为内法向（Fluent 质量流量入口） |
+
+定值类的值恰好用下面一种方式给出，`ramp`、`noise` 可叠加：
+
+```jsonc
+"U": { "type": "fixedValue", "value": [1, 0, 0] }                                   // 常数
+"U": { "type": "fixedValue", "timeTable": [[0, [0,0,0]], [1, [1,0,0]], [5, [1,0,0]]] }  // 时间表（分段线性），也可 {"file": "u_t.csv"}
+"U": { "type": "fixedValue", "profile": { "file": "inlet.csv", "axis": "y" } }      // 剖面表：文件列 s, u, v, w（标量场为 s, φ），
+                                                                                    //   s 为沿 axis（x/y/z）或 direction（相对 origin）的坐标；可 "scale"
+"U": { "type": "fixedValue", "parabolic": { "Ubulk": 1, "radius": 0.5 } }           // 圆管抛物线 2 Ub (1 − r²/R²)，中心默认为 patch 面心
+"U": { "type": "fixedValue", "parabolic": { "Ubulk": 1, "halfWidth": 0.5, "axis": [0, 1, 0] } }  // 平面槽道 1.5 Ub (1 − s²/h²)；可用 Umax 代替 Ubulk，
+                                                                                    //   "center"、"direction"（默认内法向）可选
+"U": { "type": "fixedValue", "value": [1, 0, 0], "ramp": { "duration": 2 } }        // 缓启动：t∈[0, duration] 内由 0 平滑增到值
+                                                                                    //   （smoothstep 6y⁵−15y⁴+10y³，"shape": "linear" 为线性）
+"U": { "type": "fixedValue", "value": [1, 0, 0], "noise": 0.05 }                    // LES 入口随机扰动：每面每步 ±noise·|U|（坐标 + 时间散列，与进程数无关）
+```
+
+### 梯度类与其他
+
+| type | 参数 | 含义 |
+| --- | --- | --- |
 | `zeroGradient` | | 零法向梯度 |
 | `fixedGradient` | `gradient` | 给定法向梯度 |
+| `fixedFluxPressure` | | 压力梯度由求解器设定，使边界通量等于边界速度的通量（无体力时同 zeroGradient；浮力等体力进入通量后须用它） |
 | `robin` | `a` `b` `c` | a φ + b ∂φ/∂n = c |
 | `symmetry` / `slip` | | 对称面 / 滑移壁 |
+| `mixed` | （程序内部） | w·定值 + (1−w)·定梯度，下列条件的基类 |
 
-周期（cyclic）和 empty 边界由网格决定，不需要写。
+### 进出口类（需要流动信息，由求解器提供通量 / 速度 / 时间步）
+
+| type | 场 | 参数 | 含义 |
+| --- | --- | --- | --- |
+| `inletOutlet` | 任意 | `inletValue`（给法同 `value`，缺省 0） | 流出面零梯度、回流面取 inletValue：**出口防回流**的标准写法 |
+| `totalPressure` | p | `p0`（常数或时间表） | 总压入口：流入面 p = p0 − ½\|U_b\|²，流出面 p = p0（Fluent 压力入口） |
+| `pressureInletOutletVelocity` | U | 可选 `tangentialVelocity` | 配 totalPressure / 定压边界：流出面零梯度，流入面法向分量零梯度、切向取给定值（默认 0） |
+| `freestream` | U | `freestreamValue` | 自由来流：按来流方向定进出 w = ½ − ½ (U∞·n)/\|U∞\|（流入面定值、流出面零梯度），不随当地通量跳变 |
+| `freestream` | 标量 | `freestreamValue` | 同 inletOutlet |
+| `freestreamPressure` | p | `freestreamValue`，可选 `U` | 流出面定值 p∞、流入面零梯度；U∞ 取同一 patch 上 U 的 freestream 条件（或显式给 `U`） |
+| `advective` | 任意 | 可选 `fieldInf` + `lInf` | 对流出流 ∂φ/∂t + U_n ∂φ/∂n = 0（与场的时间格式一致地隐式离散；可向远场值 fieldInf 以长度 lInf 松弛）。稳态或流入时退化为零梯度 |
+
+湍流量（k、epsilon、omega、nuTilda）的入口可直接按 Fluent 的方式给强度与尺度，写在 patch 下的 `turbulence` 里，
+各模型自动换成对应场的条件（流出面零梯度）：
+
+```jsonc
+"inlet": { "U": { "type": "fixedValue", "value": [1, 0, 0] }, "p": { "type": "zeroGradient" },
+           "turbulence": { "intensity": 0.05, "lengthScale": 0.07 } }       // 或 "viscosityRatio": 10
+```
+
+k = 1.5 (I\|U_b\|)²；ε = Cμ^{3/4} k^{3/2}/L 或 Cμ k²/(r ν)；ω = √k/(Cμ^{1/4} L) 或 k/(r ν)；ν̃ 由 χ f_v1(χ) = r 反解。
+也可逐场写 `{"type": "turbulentIntensity", "intensity": 0.05}`（k）、`{"type": "turbulentMixingLength", "lengthScale": 0.07}`、
+`{"type": "viscosityRatio", "viscosityRatio": 10}`（ε、ω、nuTilda）。
+
+**常用组合**（对应 Fluent 边界类型）：
+
+| Fluent | Voluma |
+| --- | --- |
+| velocity inlet | U `fixedValue`（常数 / 剖面 / 时间表 / 抛物线），p `zeroGradient`，`turbulence` 强度 + 尺度 |
+| mass flow inlet | U `flowRateInlet`，p `zeroGradient` |
+| pressure inlet | p `totalPressure`，U `pressureInletOutletVelocity`（稳态时对流格式用 linearUpwind / limitedLinear，中心格式会发散） |
+| pressure outlet | p `fixedValue`，U `inletOutlet`（标量也用 inletOutlet 防回流） |
+| outflow（瞬态） | U / 标量 `advective`，p `fixedValue` 或 `zeroGradient` |
+| pressure far-field（不可压） | U `freestream`，p `freestreamPressure` |
+| wall / moving wall | 不写（无滑移）/ `movingWall` / `rotatingWall` |
+| symmetry | `symmetry`（或网格 patch 类型 symmetry） |
+
+验证算例（`cases/channelInlet`、`cases/taylorCouette`、`cases/advectiveOutlet`、`cases/jetBox`，都在 ctest 中）见 `docs/validation.md`。
 
 ## initial
 
-`"initial": { "U": [0, 0, 0], "p": 0 }`，fvmScalar 为 `{ "T": 300 }`。
+`"initial": { "U": [0, 0, 0], "p": 0 }`，fvmScalar 为 `{ "T": 300 }`，可叠加高斯脉冲
+`"gaussian": { "center": [0.5, 0, 0], "sigma": 0.1, "amplitude": 1 }`（A exp(−|x − c|²/σ²)）。
 
 `"noise": 0.02` 在速度初场上叠加该幅值的随机扰动（与进程数无关），用于打破对称、触发脱落或转捩。
 

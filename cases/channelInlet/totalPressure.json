@@ -1,0 +1,21 @@
+// 总压入口 + 定压出口（Bernoulli 检验）：滑移壁、p0 = 0.5、出口 p = 0 → 精确解 U = 1 均匀、p = 0
+//   入口 U 用 pressureInletOutletVelocity（流入面法向分量外推、切向为 0），出口 U 用 inletOutlet
+//   注意：压力入口的流入面速度为零梯度，对流项在入口单元给出负的对角贡献，稳态 SIMPLE 配中心格式（linear）会发散，
+//   须用迎风类格式（linearUpwind / limitedLinear，Fluent 默认也是二阶迎风）；均匀解仍精确到舍入误差
+//   收敛后速度均匀，U 的归一化残差无意义（不下降），由 maxIter 结束
+//   对比：python3 tools/compare_channel_inlet.py output --mode bernoulli
+{
+  "mesh": { "box": { "n": [40, 10, 1], "hi": [4, 1, 0.1], "twoD": true, "names": { "xMin": "inlet", "xMax": "outlet" } } },
+  "physics": { "nu": 0.01, "steady": true },
+  "boundary": {
+    "inlet":  { "U": { "type": "pressureInletOutletVelocity" }, "p": { "type": "totalPressure", "p0": 0.5 } },
+    "outlet": { "U": { "type": "inletOutlet", "inletValue": [0, 0, 0] }, "p": { "type": "fixedValue", "value": 0 } },
+    "yMin":   { "U": { "type": "slip" }, "p": { "type": "zeroGradient" } },
+    "yMax":   { "U": { "type": "slip" }, "p": { "type": "zeroGradient" } }
+  },
+  "initial": { "U": [0, 0, 0] },
+  "schemes": { "div": "linearUpwind" },
+  "solution": { "alphaU": 0.7, "alphaP": 0.3 },
+  "run": { "maxIter": 400, "residualTol": 1e-12, "printInterval": 100, "vtk": false, "printFluxes": true },
+  "lines": [ { "name": "centre", "start": [0, 0.55, 0.05], "end": [4, 0.55, 0.05], "n": 40 } ]
+}

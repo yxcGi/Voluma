@@ -3,6 +3,7 @@
 #include "fvm/app/CaseSetup.h"
 #include "fvm/discretization/Fvc.h"
 #include "fvm/io/Restart.h"
+#include "fvm/models/TurbulenceBCs.h"
 
 #include <algorithm>
 #include <cmath>
@@ -44,13 +45,16 @@ ScalarField& TurbulenceModel::addField(const std::string& name, const std::strin
         if (p.type == PatchType::Empty || p.type == PatchType::Cyclic) continue;
         const Json& pd = boundary_[p.name];
         if (pd.has(name)) {
-            setBoundaryCondition(f, p.name, pd[name]);
+            if (!setTurbulentInlet(f, p.name, pd[name])) setBoundaryCondition(f, p.name, pd[name], &flow_.context());
+        } else if (pd.has("turbulence")) {
+            // patch 级简写：{"intensity": I, "lengthScale": L} 或 {"intensity": I, "viscosityRatio": r}
+            setTurbulentInlet(f, p.name, pd["turbulence"]);
         } else if (p.type == PatchType::Wall) {
-            setBoundaryCondition(f, p.name, wallDefault == "zero" ? zero : zg);
+            setBoundaryCondition(f, p.name, wallDefault == "zero" ? zero : zg, &flow_.context());
         } else if (p.type == PatchType::Symmetry) {
             f.set<SymmetryBC<scalar>>(p.name);
         } else {
-            setBoundaryCondition(f, p.name, zg);
+            setBoundaryCondition(f, p.name, zg, &flow_.context());
             defaulted.push_back(p.name);
         }
     }
@@ -64,6 +68,43 @@ ScalarField& TurbulenceModel::addField(const std::string& name, const std::strin
     f.correctBoundaryConditions();
     fields_.push_back(&f);
     return f;
+}
+
+// 湍流量入口：按场名与给出的参数选择 turbulentIntensity / turbulentMixingLength / viscosityRatio；
+// d 可以是该场自己的字典（含 "type"）或 patch 级 "turbulence" 简写。返回 false 表示不是湍流入口类型
+bool TurbulenceModel::setTurbulentInlet(ScalarField& f, const std::string& patch, const Json& d) {
+    const std::string name = f.name();
+    const std::string type = d.get("type", "");
+    const bool shorthand = type.empty();
+    if (!shorthand && type != "turbulentIntensity" && type != "turbulentMixingLength" && type != "viscosityRatio" &&
+        type != "turbulentInlet")
+        return false;
+    const BCContext* ctx = &flow_.context();
+    const scalar I = d.get("intensity", 0.0);
+    const scalar L = d.has("lengthScale") ? d["lengthScale"].number() : d.get("mixingLength", 0.0);
+    const scalar r = d.get("viscosityRatio", 0.0);
+    const std::string where = name + " on patch " + patch;
+    const ScalarField* k = nullptr;
+    for (auto* g : fields_)
+        if (g->name() == "k") k = g;
+    if (name == "k") {
+        if (!(I > 0)) throw std::runtime_error(where + ": turbulent inlet needs \"intensity\"");
+        f.set<TurbulentIntensityKBC>(patch, ctx, I);
+    } else if (name == "epsilon" || name == "omega") {
+        const auto field = name == "epsilon" ? TurbulentScaleBC::Field::Epsilon : TurbulentScaleBC::Field::Omega;
+        if (L > 0)
+            f.set<TurbulentScaleBC>(patch, ctx, field, TurbulentScaleBC::Mode::MixingLength, L, k, Cmu_);
+        else if (r > 0)
+            f.set<TurbulentScaleBC>(patch, ctx, field, TurbulentScaleBC::Mode::ViscosityRatio, r, k, Cmu_);
+        else
+            throw std::runtime_error(where + ": turbulent inlet needs \"lengthScale\" or \"viscosityRatio\"");
+    } else if (name == "nuTilda") {
+        f.set<NuTildaInletBC>(patch, ctx, r, I, L, Cmu_);
+    } else {
+        if (shorthand) return false;
+        throw std::runtime_error(where + ": turbulent inlet type '" + type + "' not applicable to " + name);
+    }
+    return true;
 }
 
 void TurbulenceModel::bound(ScalarField& f, scalar minValue) {

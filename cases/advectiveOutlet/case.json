@@ -1,0 +1,19 @@
+// 对流出流边界（advective）检验：均匀流 U = 1 中的高斯脉冲（σ = 0.1）从出口流出，Γ = 0.01（Pe_σ = 10）
+//   解析解 T = A σ/σ(t) exp(−(x − x0 − U t)²/σ(t)²)，σ(t)² = σ² + 4 Γ t；t = 1.8 时脉冲中心已出到 x = 2.3，尾部仍在流出
+//   出口用 advective（∂T/∂t + U ∂T/∂n = 0），对照 zeroGradient.json（出口零梯度与真实梯度不符，边界单元偏高 4%）
+//   结果：advective 最大误差 0.15%（出口单元 0.3%），zeroGradient 1.2%（出口单元 3.7%）
+//   运行：fvmScalar case.json；对比：python3 tools/compare_advective.py output
+{
+  "mesh": { "box": { "n": [200, 1, 1], "hi": [2, 0.01, 0.01], "twoD": true, "names": { "xMin": "inlet", "xMax": "outlet" } } },
+  "physics": { "field": "T", "diffusivity": 0.01, "velocity": [1, 0, 0], "steady": false },
+  "boundary": {
+    "inlet":  { "T": { "type": "fixedValue", "value": 0 } },
+    "outlet": { "T": { "type": "advective" } },
+    "yMin":   { "T": { "type": "zeroGradient" } },
+    "yMax":   { "T": { "type": "zeroGradient" } }
+  },
+  "initial": { "T": 0, "gaussian": { "center": [0.5, 0.005, 0.005], "sigma": 0.1, "amplitude": 1 } },
+  "schemes": { "div": "linear", "ddt": "backward" },
+  "run": { "endTime": 1.8, "dt": 0.0025, "vtk": false },
+  "lines": [ { "name": "centre", "start": [0, 0.005, 0.005], "end": [2, 0.005, 0.005], "n": 200 } ]
+}

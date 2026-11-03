@@ -9,6 +9,7 @@
 #include "fvm/io/VtkWriter.h"
 #include "fvm/solvers/ScalarTransport.h"
 
+#include <cmath>
 #include <iostream>
 
 using namespace cfd;
@@ -45,8 +46,21 @@ void runCase(const std::string& caseFile) {
     st.verbose = sol.get("verbose", false);
     st.controls = parseSolverControls(sol[name], st.controls);
 
-    setBoundaryConditions(st.T(), cfg["boundary"], Json());
+    BCContext ctx;
+    ctx.phi = convect ? &phi : nullptr;
+    ctx.time = &st.time();
+    ctx.ddt = st.steady ? DdtScheme::Steady : st.ddtScheme;
+    ctx.caseDir = dir;
+    setBoundaryConditions(st.T(), cfg["boundary"], Json(), &ctx);
     st.T().setUniform(cfg["initial"].get(name, 0.0));
+    if (cfg["initial"].has("gaussian")) {
+        // 叠加高斯脉冲 A exp(−|x − c|²/σ²)
+        const Json& g = cfg["initial"]["gaussian"];
+        const Vec3 c = g.get("center", Vec3{0, 0, 0});
+        const scalar sig = g["sigma"].number(), A = g.get("amplitude", 1.0);
+        auto& T = st.T();
+        for (label i = 0; i < mesh->nTotalCells(); ++i) T[i] += A * std::exp(-magSqr(mesh->C()[i] - c) / (sig * sig));
+    }
     st.initialize();
 
     const Json& run = cfg["run"];

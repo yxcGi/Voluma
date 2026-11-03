@@ -1,0 +1,20 @@
+// 同 case.json，四个外边界全部改用自由来流条件：U freestream（按来流方向定进出：流入面定值、流出面零梯度），
+//   p freestreamPressure（流出面定值 0、流入面零梯度）。与 case.json（入口定速 / 出口定压 / 上下滑移）结果对照
+//   结果（见 docs/validation.md）：Cd、回流区长度与 case.json 一致
+{
+  "mesh": { "cylinder": { "nTheta": 192, "nRadial": 110, "firstCell": 0.01, "upstream": 40, "downstream": 60, "halfHeight": 40,
+                          "twoD": true } },
+  "physics": { "nu": 0.025, "steady": true },
+  "initial": { "U": [1, 0, 0] },
+  "schemes": { "div": "linearUpwind" },
+  "solution": { "nNonOrthCorr": 1 },
+  "boundary": {
+    "inlet":  { "U": { "type": "freestream", "freestreamValue": [1, 0, 0] }, "p": { "type": "freestreamPressure", "freestreamValue": 0 } },
+    "outlet": { "U": { "type": "freestream", "freestreamValue": [1, 0, 0] }, "p": { "type": "freestreamPressure", "freestreamValue": 0 } },
+    "top":    { "U": { "type": "freestream", "freestreamValue": [1, 0, 0] }, "p": { "type": "freestreamPressure", "freestreamValue": 0 } },
+    "bottom": { "U": { "type": "freestream", "freestreamValue": [1, 0, 0] }, "p": { "type": "freestreamPressure", "freestreamValue": 0 } }
+  },
+  "run": { "maxIter": 6000, "residualTol": 1e-7, "printInterval": 200, "vtk": false },
+  "forces": { "patches": ["cylinder"], "Uref": 1, "lRef": 1, "CofR": [0, 0, 0], "interval": 100 },
+  "lines": [ { "name": "wake", "start": [0.5, 0, 0], "end": [6, 0, 0], "n": 551 } ]
+}

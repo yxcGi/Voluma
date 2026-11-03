@@ -65,5 +65,40 @@ if(Python3_Interpreter_FOUND)
   add_test(NAME case_tgv3d_32 COMMAND ${FVM_CHECK} --case ${CMAKE_SOURCE_DIR}/cases/tgv3d/case32.json
            --workdir ${CMAKE_BINARY_DIR}/cases/tgv3d ${FVM_MPI_ARGS}
            -- ${CMAKE_SOURCE_DIR}/tools/compare_tgv.py OUTPUT/monitor.csv --check 30)
-  set_tests_properties(case_pipe_laminar case_cylinder_re40 case_tgv3d_32 PROPERTIES LABELS "case" TIMEOUT 1200)
+  # 边界条件算例（cases/channelInlet 等，见 docs/validation.md）
+  set(FVM_CHECK_SCALAR ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/check_case.py --exe $<TARGET_FILE:fvmScalar>)
+  add_test(NAME case_bc_parabolic COMMAND ${FVM_CHECK} --case ${CMAKE_SOURCE_DIR}/cases/channelInlet/parabolic.json
+           --workdir ${CMAKE_BINARY_DIR}/cases/bc_parabolic ${FVM_MPI_ARGS}
+           -- ${CMAKE_SOURCE_DIR}/tools/compare_channel_inlet.py OUTPUT --mode poiseuille --nu 0.05 --check)
+  add_test(NAME case_bc_profile COMMAND ${FVM_CHECK} --case ${CMAKE_SOURCE_DIR}/cases/channelInlet/profile.json
+           --workdir ${CMAKE_BINARY_DIR}/cases/bc_profile ${FVM_MPI_ARGS}
+           -- ${CMAKE_SOURCE_DIR}/tools/compare_channel_inlet.py OUTPUT --mode poiseuille --nu 0.05 --check)
+  add_test(NAME case_bc_fixedFluxPressure COMMAND ${FVM_CHECK} --case ${CMAKE_SOURCE_DIR}/cases/channelInlet/fixedFluxPressure.json
+           --workdir ${CMAKE_BINARY_DIR}/cases/bc_fixedFluxPressure ${FVM_MPI_ARGS}
+           -- ${CMAKE_SOURCE_DIR}/tools/compare_channel_inlet.py OUTPUT --mode poiseuille --nu 0.05 --check)
+  add_test(NAME case_bc_flowRate COMMAND ${FVM_CHECK} --case ${CMAKE_SOURCE_DIR}/cases/channelInlet/flowRate.json
+           --workdir ${CMAKE_BINARY_DIR}/cases/bc_flowRate ${FVM_MPI_ARGS}
+           -- ${CMAKE_SOURCE_DIR}/tools/compare_channel_inlet.py OUTPUT --mode developed --nu 0.05 --check)
+  add_test(NAME case_bc_totalPressure COMMAND ${FVM_CHECK} --case ${CMAKE_SOURCE_DIR}/cases/channelInlet/totalPressure.json
+           --workdir ${CMAKE_BINARY_DIR}/cases/bc_totalPressure ${FVM_MPI_ARGS}
+           -- ${CMAKE_SOURCE_DIR}/tools/compare_channel_inlet.py OUTPUT --mode bernoulli --check)
+  add_test(NAME case_bc_timeTable COMMAND ${FVM_CHECK} --case ${CMAKE_SOURCE_DIR}/cases/channelInlet/timeTable.json
+           --workdir ${CMAKE_BINARY_DIR}/cases/bc_timeTable ${FVM_MPI_ARGS}
+           -- ${CMAKE_SOURCE_DIR}/tools/compare_channel_inlet.py OUTPUT --mode ramp --check)
+  add_test(NAME case_bc_turbulentInlet COMMAND ${FVM_CHECK} --case ${CMAKE_SOURCE_DIR}/cases/channelInlet/rans.json
+           --workdir ${CMAKE_BINARY_DIR}/cases/bc_turbulentInlet ${FVM_MPI_ARGS}
+           -- ${CMAKE_SOURCE_DIR}/tools/check_fluxes.py OUTPUT --converged)
+  add_test(NAME case_bc_rotatingWall COMMAND ${FVM_CHECK} --case ${CMAKE_SOURCE_DIR}/cases/taylorCouette/case.json
+           --workdir ${CMAKE_BINARY_DIR}/cases/bc_rotatingWall ${FVM_MPI_ARGS}
+           -- ${CMAKE_SOURCE_DIR}/tools/compare_taylor_couette.py OUTPUT --tol 0.01 --check)
+  add_test(NAME case_bc_advective COMMAND ${FVM_CHECK_SCALAR} --case ${CMAKE_SOURCE_DIR}/cases/advectiveOutlet/case.json
+           --workdir ${CMAKE_BINARY_DIR}/cases/bc_advective
+           -- ${CMAKE_SOURCE_DIR}/tools/compare_advective.py OUTPUT --check)
+  add_test(NAME case_bc_inletOutlet_backflow COMMAND ${FVM_CHECK} --case ${CMAKE_SOURCE_DIR}/cases/jetBox/case.json
+           --workdir ${CMAKE_BINARY_DIR}/cases/bc_jetBox ${FVM_MPI_ARGS}
+           -- ${CMAKE_SOURCE_DIR}/tools/check_fluxes.py OUTPUT --expect-backflow outlet)
+  set_tests_properties(case_pipe_laminar case_cylinder_re40 case_tgv3d_32 case_bc_parabolic case_bc_profile
+                       case_bc_fixedFluxPressure case_bc_flowRate case_bc_totalPressure case_bc_timeTable
+                       case_bc_turbulentInlet case_bc_rotatingWall case_bc_advective case_bc_inletOutlet_backflow
+                       PROPERTIES LABELS "case" TIMEOUT 1200)
 endif()

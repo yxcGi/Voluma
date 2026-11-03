@@ -37,12 +37,31 @@
 | 周期山 Re_b = 10595 RANS k-ω SST（`cases/periodicHillRANS`，图 `docs/validation/periodic_hill_sst.png`） | Breuer 等 2009 LES（分离 0.19、再附 4.69）/ Rapp 2009 实验（`cases/periodicHill/reference`） | 160×2×80 贴体网格，最大非正交 41°，y+ ≤ 0.45 | 分离/再附点、10 个站位 u 剖面 rms 误差 | 分离 0.25、再附 7.6；u 剖面 rms 误差 0.06–0.15 U_b（平均 0.11）。SST 回流区过长是该模型的已知缺陷：Saïdi 等 2022（J. Comput. Phys. 457, arXiv 2104.09187，表 2）用 k-ω SST 算同一算例得分离 0.270、再附 7.642（其 LES 参考 0.215 / 4.760），与本结果一致 | ✅（与文献 SST 结果定量一致；SIMPLE 2769 步收敛到 1e-6，3.5 分钟） |
 | 周期山 Re_b = 10595 RANS BSL-EARSM（`cases/periodicHillEARSM`，图 `docs/validation/periodic_hill_earsm.png`） | 同上；Saïdi 等 2022 的 BSL-EARSM：分离 0.282、再附 4.561 | 同上 | 同上 | 分离 0.24、再附 5.26；u 剖面 rms 误差平均 0.065 U_b（SST 0.111）。模型为 Wallin-Johansson EARSM + Menter BSL，加了 ν_t ≤ k/ω 的上限（整个各向异性张量同比例缩小；不加时弱应变区 C_μ^eff 达 0.33，再附只有 3.2） | ✅（分离流 RANS 的改进方案；再附仍比 LES 长 10 %） |
 
-## 四、并行与可复现
+## 四、边界条件验证
+
+每种条件配一个有解析解或可严格核对的小算例，全部在 ctest 中（`case_bc_*`，2 进程）；系数自洽性、切换逻辑、
+时间表 / 剖面表 / 抛物线 / 旋转壁 / 流量入口 / 湍流入口的面值在 `tests/test_boundary` 中逐面核对（串行与 3 进程）。
+
+| 条件 | 算例 | 参考 | 指标 | 结果 | 状态 |
+| --- | --- | --- | --- | --- | --- |
+| 抛物线入口 + 定压出口 + `inletOutlet` | `cases/channelInlet/parabolic.json`，80×20 | Poiseuille u = 6U_b y(1−y)，dp/dx = −12νU_b/h² | 出口剖面最大误差、dp/dx | 0.21 %、0.37 %；160×40 为 0.06 %、0.09 %（二阶，壁面单元半格梯度为一阶近似所致） | ✅ ctest |
+| 剖面表入口（文件） | `profile.json` | 同上 | 同上 | 与 parabolic 结果相同（41 点表线性插值） | ✅ ctest |
+| `fixedFluxPressure` | `fixedFluxPressure.json` | 同 parabolic | 同上 | 与 zeroGradient 压力边界结果逐位相同（无体力时的预期） | ✅ ctest |
+| 流量入口 `flowRateInlet` | `flowRate.json`，120×24，L = 6h | 发展为 Poiseuille；进出口流量 | 出口剖面、dp/dx、流量 | 0.17 %、0.35 %；进出口流量 ∓0.1 精确到 1e-10 | ✅ ctest |
+| 总压入口 `totalPressure` + `pressureInletOutletVelocity` | `totalPressure.json`，滑移壁 | Bernoulli：p0 = 0.5、p_out = 0 → U = 1、p = 0 | max\|U − 1\|、max\|p\| | 2e-16、4e-16（稳态 SIMPLE 须用迎风类格式，中心格式发散） | ✅ ctest |
+| 时间表入口 | `timeTable.json`，塞流线性加速 | U(t) = 表值，p = (L − x) dU/dt | 下游半段 U、p；边界通量 | 3e-7、3e-9；通量 ∓0.05 精确。入口附近单元值有奇偶振荡（定速入口的零梯度压力条件与加速流动的真实 ∂p/∂n 不符，OpenFOAM 同） | ✅ ctest |
+| 湍流入口（强度 + 长度尺度） | `rans.json`，k-ε 壁面函数 Re_h 1e5 | Fluent 公式 | 入口 k、ε 面值；收敛、流量守恒 | 面值与公式一致到 1e-12（单元测试）；173 步收敛，流量守恒 | ✅ ctest |
+| 旋转壁 `rotatingWall` + Gmsh 二维四边形导入 | `cases/taylorCouette`，20×96 | Taylor-Couette u_θ = (1/r − r)/3 | max\|u_θ − 精确\|/ΩR1、max\|u_r\|/ΩR1 | 0.24 %、0.79 %；40×192 为 0.06 %、0.20 %（二阶） | ✅ ctest |
+| 对流出流 `advective` | `cases/advectiveOutlet`（fvmScalar），Pe_σ = 10 | 一维对流扩散高斯脉冲解析解 | t = 1.8 脉冲尾部流出时的最大误差 | advective 0.15 %（出口单元 0.3 %）；对照 zeroGradient 1.2 %（出口单元 3.7 %） | ✅ ctest |
+| `inletOutlet` 回流稳健性 | `cases/jetBox`，Gmsh 三角形，Re 100 射流 | — | 出口有持续回流（约 11 % 流量）时运行到 t = 20 不发散、总流量守恒 | 回流 −0.0022 / 净 0.02，守恒到 1e-10 | ✅ ctest |
+| 自由来流 `freestream` + `freestreamPressure` | `cases/cylinderRe40/freestream.json` | 同算例标准边界：Cd 1.517、L_w 2.22、θ 53.7° | Cd、L_w、θ_sep | 1.510、2.22、53.7°（远场允许少量穿越流动） | ✅（21 s，2 进程） |
+
+## 五、并行与可复现
 
 | 项目 | 结果 |
 | --- | --- |
 | np = 1, 2, 3, 4 可复现模式逐位相同 | TGV、pitzDaily ✅ |
-| ctest 并行（np = 3）单元测试 | 5 项 ✅ |
+| ctest 并行（np = 3）单元测试 | 6 项 ✅ |
 
 ## 已知限制
 

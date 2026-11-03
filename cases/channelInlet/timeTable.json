@@ -1,0 +1,21 @@
+// 时间表入口（瞬态）：滑移壁的塞流，入口速度按表 0→1 线性爬升（t ∈ [0,1]），出口 p = 0
+//   精确解：U(t) 均匀 = 表值，p(x) = (L − x) dU/dt；t = 0.5 时 U = 0.5，p = 4 − x
+//   面通量与下游半段的单元值精确；定速入口附近的单元速度 / 压力有奇偶振荡（约 10 个单元内衰减）：
+//   加速流动在入口处真实 ∂p/∂n ≠ 0，而定速入口的压力条件为零梯度（OpenFOAM 同），入口单元的 Gauss 压力梯度偏小
+//   对比：python3 tools/compare_channel_inlet.py output --mode ramp
+{
+  "mesh": { "box": { "n": [40, 10, 1], "hi": [4, 1, 0.1], "twoD": true, "names": { "xMin": "inlet", "xMax": "outlet" } } },
+  "physics": { "nu": 0.01, "steady": false },
+  "boundary": {
+    "inlet":  { "U": { "type": "fixedValue", "timeTable": [[0, [0, 0, 0]], [1, [1, 0, 0]], [2, [1, 0, 0]]] },
+                "p": { "type": "zeroGradient" } },
+    "outlet": { "U": { "type": "inletOutlet", "inletValue": [0, 0, 0] }, "p": { "type": "fixedValue", "value": 0 } },
+    "yMin":   { "U": { "type": "slip" }, "p": { "type": "zeroGradient" } },
+    "yMax":   { "U": { "type": "slip" }, "p": { "type": "zeroGradient" } }
+  },
+  "initial": { "U": [0, 0, 0] },
+  "schemes": { "div": "linear", "ddt": "backward" },
+  "solution": { "nOuter": 1, "nCorr": 2 },
+  "run": { "endTime": 0.5, "dt": 0.01, "printInterval": 10, "vtk": false, "printFluxes": true },
+  "lines": [ { "name": "centre", "start": [0, 0.55, 0.05], "end": [4, 0.55, 0.05], "n": 40 } ]
+}

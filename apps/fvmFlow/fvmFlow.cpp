@@ -4,6 +4,7 @@
 //
 // 算例文件结构见 docs/case-format.md 与 cases/ 下的示例。
 #include "fvm/app/CaseSetup.h"
+#include "fvm/field/Functions.h"
 #include "fvm/io/Probes.h"
 #include "fvm/io/Restart.h"
 #include "fvm/io/TecplotWriter.h"
@@ -22,17 +23,6 @@
 #include <iostream>
 
 using namespace cfd;
-
-// 由坐标散列得到的 [-1, 1) 伪随机数（与进程划分无关）
-static double coordHash(const Vec3& x, int comp) {
-    std::uint64_t h = 1469598103934665603ull ^ std::uint64_t(comp);
-    for (scalar v : {x.x, x.y, x.z}) {
-        const std::int64_t q = std::llround(v * 1e9);
-        h = (h ^ std::uint64_t(q)) * 1099511628211ull;
-        h ^= h >> 29;
-    }
-    return double(h >> 11) / double(1ull << 53) * 2 - 1;
-}
 
 // 槽道 LES 初场：1/7 次方律平均剖面（体平均 = Ubulk）+ 无散的流向涡/条带扰动 + 小幅随机扰动。
 // 随机数由单元中心坐标散列得到，与进程划分无关。
@@ -191,8 +181,9 @@ void runCase(const std::string& caseFile) {
 
     // 边界与初值
     const Json& bnd = cfg["boundary"];
-    setBoundaryConditions(flow.U(), bnd, Json::parse(R"({"type":"noSlip"})"));
-    setBoundaryConditions(flow.p(), bnd, Json::parse(R"({"type":"zeroGradient"})"));
+    flow.context().caseDir = dir;
+    setBoundaryConditions(flow.U(), bnd, Json::parse(R"({"type":"noSlip"})"), &flow.context());
+    setBoundaryConditions(flow.p(), bnd, Json::parse(R"({"type":"zeroGradient"})"), &flow.context());
     const Json& ini = cfg["initial"];
     flow.U().setUniform(ini.get("U", Vec3{0, 0, 0}));
     flow.p().setUniform(ini.get("p", 0.0));
@@ -348,18 +339,26 @@ void runCase(const std::string& caseFile) {
         return {Cd, Cl, Cm};
     };
 
-    // 各边界的体积通量（正为流出）
+    // 各边界的体积通量（正为流出）；同一边界既有流入又有流出时括号内给出较小的那部分（如出口回流量）
     auto printFluxes = [&] {
         const Mesh& m = *mesh;
-        std::vector<double> q(m.patches().size(), 0.0);
-        for (std::size_t p = 0; p < q.size(); ++p) {
+        const std::size_t np = m.patches().size();
+        std::vector<double> q(2 * np, 0.0);  // [净通量..., 流入部分...]
+        for (std::size_t p = 0; p < np; ++p) {
             const auto& pt = m.patches()[p];
-            for (label f = pt.start; f < pt.end(); ++f) q[p] += flow.phi()[f];
+            for (label f = pt.start; f < pt.end(); ++f) {
+                q[p] += flow.phi()[f];
+                if (flow.phi()[f] < 0) q[np + p] += flow.phi()[f];
+            }
         }
         par::allSumInPlace(q.data(), int(q.size()));
         std::cout << "  boundary fluxes:";
-        for (std::size_t p = 0; p < q.size(); ++p)
-            if (m.patches()[p].type != PatchType::Cyclic) std::cout << ' ' << m.patches()[p].name << ' ' << q[p];
+        for (std::size_t p = 0; p < np; ++p) {
+            if (m.patches()[p].type == PatchType::Cyclic) continue;
+            std::cout << ' ' << m.patches()[p].name << ' ' << q[p];
+            const double in = q[np + p], out = q[p] - in;
+            if (in < 0 && out > 0) std::cout << (q[p] >= 0 ? " (backflow " : " (outflow ") << (q[p] >= 0 ? in : out) << ')';
+        }
         std::cout << '\n';
     };
     const bool fluxReport = run.get("printFluxes", false);

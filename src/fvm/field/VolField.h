@@ -83,7 +83,7 @@ public:
 
     void updateBCs(scalar t) {
         for (auto& b : bcs_)
-            if (b) b->update(t);
+            if (b) b->update(*this, t);
     }
     // halo 交换 + 按边界条件更新边界面值
     void correctBoundaryConditions() {
@@ -188,6 +188,79 @@ template <> inline Vec3 SymmetryBC<Vec3>::gradientBoundaryCoeff(const VolField<V
     const Vec3& u = f[faceCell(i)];
     const Vec3 sn = -deltaCoeff(i) * dot(n, u) * n;
     return sn - cmptMultiply(gradientInternalCoeff(f, i), u);
+}
+
+// freestreamPressure：首次更新时从同一 patch 上 U 的 freestream 条件取 U∞
+inline void FreestreamPressureBC::update(const VolField<scalar>&, scalar) {
+    if (haveU_) return;
+    if (!ctx_ || !ctx_->U) throw std::runtime_error("freestreamPressure: give \"U\" or use flow context");
+    const auto* ub = dynamic_cast<const FreestreamVelocityBC*>(&ctx_->U->bc(patchIndex()));
+    if (!ub)
+        throw std::runtime_error("freestreamPressure on patch " + patch().name +
+                                 ": U must use freestream on the same patch, or give \"U\" explicitly");
+    setDirection(ub->freestreamValue());
+}
+
+inline Vec3 PressureInletOutletVelocityBC::faceValue(const VolField<Vec3>& f, label i) const {
+    const Vec3& u = f[faceCell(i)];
+    if (ctx_->phiAt(face(i)) >= 0) return u;
+    const Vec3 n = nf(i);
+    return dot(n, u) * n + (Ut_ - dot(n, Ut_) * n);
+}
+inline void PressureInletOutletVelocityBC::evaluate(const VolField<Vec3>& f, Vec3* b) {
+    for (label i = 0; i < patch().size; ++i) b[i] = faceValue(f, i);
+}
+inline Vec3 PressureInletOutletVelocityBC::valueBoundaryCoeff(const VolField<Vec3>& f, label i) const {
+    return faceValue(f, i) - cmptMultiply(valueInternalCoeff(f, i), f[faceCell(i)]);
+}
+
+inline void TotalPressureBC::update(const VolField<scalar>&, scalar t) {
+    const scalar p0 = p0_(t);
+    for (label i = 0; i < patch().size; ++i) {
+        const label f = face(i);
+        values_[i] = ctx_->phiAt(f) < 0 ? p0 - 0.5 * magSqr(ctx_->U->bValue(f)) : p0;
+    }
+}
+
+inline FlowRateInletBC::FlowRateInletBC(const Mesh& m, label p, std::function<scalar(scalar)> Q)
+    : FixedValueBC<Vec3>(m, p, Vec3{}), Q_(std::move(Q)) {
+    double a = 0;
+    for (label i = 0; i < patch().size; ++i) a += m.magSf()[face(i)];
+    par::allSumInPlace(&a, 1);
+    area_ = a;
+    if (!(area_ > 0)) throw std::runtime_error("flowRateInlet on patch " + patch().name + ": zero area");
+    FlowRateInletBC::update(0.0);
+}
+
+template <class T> void AdvectiveBC<T>::update(const VolField<T>& f, scalar) {
+    const TimeState& ts = *ctx_->time;
+    const label n = this->patch().size;
+    if (ctx_->ddt == DdtScheme::Steady || !(ts.dt > 0)) {
+        std::fill(this->w_.begin(), this->w_.end(), 0.0);
+        return;
+    }
+    if (ts.timeIndex != lastTimeIndex_) {
+        // 新时间步：当前边界值成为旧时间层
+        if (nOld_ >= 1) bOldOld_ = bOld_;
+        for (label i = 0; i < n; ++i) bOld_[i] = f.patchValue(this->patchIndex(), i);
+        nOld_ = std::min(nOld_ + 1, 2);
+        lastTimeIndex_ = ts.timeIndex;
+    }
+    const DdtCoeffs k = ddtCoeffs(ctx_->ddt, ts, nOld_ >= 2);
+    for (label i = 0; i < n; ++i) {
+        const label fc = this->face(i);
+        const scalar un = std::max(ctx_->phiAt(fc) / this->mesh().magSf()[fc], 0.0);
+        const scalar a = un * this->deltaCoeff(i);
+        const T hist = k.c0 * bOld_[i] - k.c00 * bOldOld_[i];
+        if (haveInf_) {
+            const scalar kk = un / lInf_;
+            this->refValue_[i] = (hist + kk * fieldInf_) / (k.c + kk);
+            this->w_[i] = (k.c + kk) / (k.c + a + kk);
+        } else {
+            this->refValue_[i] = hist / k.c;
+            this->w_[i] = k.c / (k.c + a);
+        }
+    }
 }
 
 } // namespace cfd

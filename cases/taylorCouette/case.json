@@ -1,0 +1,18 @@
+// Taylor-Couette 流：内筒（R1 = 0.5）以 Ω = 1 旋转，外筒（R2 = 1）静止，二维稀疏层流（Re = Ω R1 (R2−R1)/ν = 25）
+//   解析解 u_θ(r) = A r + B/r，A = −Ω R1²/(R2² − R1²) = −1/3，B = Ω R1² R2²/(R2² − R1²) = 1/3
+//   网格：Gmsh 结构化四边形环（cases/taylorCouette/mesh.py），检验 rotatingWall 与 Gmsh 二维导入
+//   对比：python3 tools/compare_taylor_couette.py output
+{
+  "mesh": { "file": "annulus.msh", "depth": 0.1 },
+  "physics": { "nu": 0.01, "steady": true },
+  "boundary": {
+    "innerWall": { "U": { "type": "rotatingWall", "origin": [0, 0, 0], "axis": [0, 0, 1], "omega": 1 } },
+    "outerWall": { "U": { "type": "noSlip" } }
+  },
+  "initial": { "U": [0, 0, 0] },
+  "schemes": { "div": "linear" },
+  "solution": { "nNonOrthCorr": 1 },
+  "run": { "maxIter": 3000, "residualTol": 1e-8, "printInterval": 100, "vtk": false },
+  "lines": [ { "name": "radial", "start": [0.5, 0, 0.05], "end": [1, 0, 0.05], "n": 100 },
+             { "name": "diag", "start": [0.3535533906, 0.3535533906, 0.05], "end": [0.7071067812, 0.7071067812, 0.05], "n": 100 } ]
+}

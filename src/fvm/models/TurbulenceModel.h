@@ -50,6 +50,8 @@ protected:
     // 设置字段的边界条件：非壁面按 JSON，壁面按模型要求（wallDefault）
     // 创建并登记模型场；wallDefault 为 "zeroGradient" 或 "zero"（定值 0）
     ScalarField& addField(const std::string& name, const std::string& wallDefault, scalar initDefault);
+    // 湍流量入口（强度 / 长度尺度 / 粘性比），见 TurbulenceBCs.h；非该类条件时返回 false
+    bool setTurbulentInlet(ScalarField& f, const std::string& patch, const Json& d);
     // 输运方程：ddt(ψ) + div(φ,ψ) − ∇·(Γ∇ψ) + Sp·ψ = Su
     // gammaCell：单元扩散系数（插值到面），Sp、Su：单位体积，Sp ≥ 0
     void solveTransport(ScalarField& psi, const std::vector<scalar>& gammaCell, const std::vector<scalar>& Sp,

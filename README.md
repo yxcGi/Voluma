@@ -6,7 +6,9 @@
 当前版本（第一阶段"基础平台"）已具备：
 
 - **不可压流动**：稳态 SIMPLE、瞬态 PIMPLE/PISO（Rhie-Chow 插值），恒定体力与"平均流速保持"驱动（周期槽道）；
-- **标量输运 / 导热**：对流-扩散-源项，定值、定梯度、Robin、对称等边界；
+- **标量输运 / 导热**：对流-扩散-源项；
+- **边界条件**：定值（常数 / 时间表 / 剖面表 / 抛物线，可缓启动、加扰动）、流量入口、平动与旋转壁、零梯度 / 定梯度 / fixedFluxPressure、Robin、对称；
+  进出口：防回流 inletOutlet、总压入口 + pressureInletOutletVelocity、自由来流、对流出流 advective；湍流入口按强度 + 长度尺度 / 粘性比给定（Fluent 式）；
 - **网格**：OpenFOAM polyMesh（任意多面体，含 cyclic、empty），内置带加密的长方体网格生成；
 - **离散**：Euler / 二阶 backward（变步长）；upwind、linear、linearUpwind、LUST、TVD（vanLeer、MUSCL、minmod、limitedLinear）；Gauss / 最小二乘梯度；非正交修正；
 - **线性求解器**：PCG、PBiCGStab、Gauss-Seidel、Jacobi；预条件 GAMG（代数多重网格）、DIC/DILU、对角；
@@ -78,6 +80,10 @@ mpirun -np 8 ./build/bin/fvmFlow cases/pitzDaily/case.json
 | `cases/channel395` `cases/channelWMLES` | fvmFlow | 槽道 RANS（Re_τ 392）与壁模型 LES（Re_τ 1000），与 DNS 对比 |
 | `cases/naca0012` | fvmFlow | NACA0012 Re 1000 二维瞬态，Cd、Cl 与文献对比 |
 | `cases/periodicHillRANS` `cases/periodicHill` | fvmFlow | 周期山 Re_b 10595：二维 k-ω SST（定性）与三维壁模型 LES（需大算力） |
+| `cases/channelInlet` | fvmFlow | 槽道进出口边界条件验证：抛物线 / 剖面表 / 流量 / 总压 / 时间表入口、inletOutlet 出口、湍流入口（Poiseuille、Bernoulli 解析解） |
+| `cases/taylorCouette` | fvmFlow | Taylor-Couette 流（旋转壁，Gmsh 四边形环），与解析解对比 |
+| `cases/advectiveOutlet` | fvmScalar | 高斯脉冲流出对流出流边界，与一维对流扩散解析解对比 |
+| `cases/jetBox` | fvmFlow | 箱内射流（Gmsh 三角形），出口持续回流下 inletOutlet 的稳健性 |
 
 网格在 `meshes/`。
 
@@ -137,7 +143,7 @@ cases/  meshes/    算例与网格
 3. LES：Smagorinsky（Van Driest 阻尼）、WALE；统计量输出与 OpenLB 的 CSV 格式一致
 4. 壁面模型 WMLES：幂律、Spalding、Musker，可调采样高度；Re_τ=1000 槽道
 5. RANS：k-ω SST、Spalart-Allmaras；周期山、圆柱绕流等
-6. 通用化：传热耦合、可压缩、更多边界（对流出口、入口剖面）、GPU
+6. 通用化：传热耦合、三维四面体网格验证、更多湍流模型与壁面处理、GPU
 
 已知限制：TVD 类格式（MUSCL 等）在个别算例上会让 SIMPLE 残差停在 1e-4 左右（限制器反复切换），此时可改用 linearUpwind；
 瞬态大步长（扩散数远大于 1）时 PISO 可能不稳定，需要增大 `nOuter` 或限制步长。

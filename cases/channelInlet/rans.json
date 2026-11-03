@@ -1,0 +1,18 @@
+// 湍流槽道进出口（Re_h = 1e5，k-ε + 壁面函数）：入口均匀速度，湍流量按强度 5% + 长度尺度 0.07h 给出（Fluent 式）；
+//   出口定压，U/k/ε 用 inletOutlet 防回流。检查收敛、流量守恒；入口 k、ε 面值在 tests/test_boundary 中按公式核对
+{
+  "mesh": { "box": { "n": [60, 30, 1], "hi": [10, 1, 0.1], "twoD": true, "walls": ["yMin", "yMax"],
+                     "names": { "xMin": "inlet", "xMax": "outlet" }, "stretch": { "y": 1.5 } } },
+  "physics": { "nu": 1e-5, "steady": true },
+  "turbulence": { "model": "kEpsilon", "wallFunctions": true },
+  "boundary": {
+    "inlet":  { "U": { "type": "fixedValue", "value": [1, 0, 0] }, "p": { "type": "zeroGradient" },
+                "turbulence": { "intensity": 0.05, "lengthScale": 0.07 } },
+    "outlet": { "U": { "type": "inletOutlet", "inletValue": [0, 0, 0] }, "p": { "type": "fixedValue", "value": 0 },
+                "k": { "type": "inletOutlet", "inletValue": 0.00375 }, "epsilon": { "type": "inletOutlet", "inletValue": 5.4e-4 } }
+  },
+  "initial": { "U": [1, 0, 0], "k": 0.00375, "epsilon": 5.4e-4 },
+  "schemes": { "div": "linearUpwind" },
+  "run": { "maxIter": 3000, "residualTol": 1e-6, "printInterval": 100, "vtk": false, "printFluxes": true },
+  "lines": [ { "name": "outlet", "start": [9.9, 0, 0.05], "end": [9.9, 1, 0.05], "n": 30 } ]
+}
