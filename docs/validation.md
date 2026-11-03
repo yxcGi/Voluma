@@ -34,7 +34,7 @@
 | RANS 槽道 Re_τ = 392（`cases/channel395`） | Moser 等 DNS | 4×120，y+ ≈ 0.1 | Re_τ | SST 394、k-ω 399、SA 390 | ✅ |
 | RANS 槽道壁面函数 Re_τ ≈ 2000 | DNS 2003 | y+ ≈ 50 | Re_τ | k-ε 1957、SST 1949、realizable 1909 | ✅ |
 | WMLES 槽道 Re_τ = 1000（`cases/channelWMLES`） | Lee & Moser 2015 DNS | 126×63×40 | Re_τ、U+ 误差 | 998.2（1000.5）；30 ≤ y+ ≤ 800 内平均 −0.15 %，首层 −9 % | ✅（5.7 小时，4 进程） |
-| 周期山 Re_b = 10595 RANS k-ω SST（`cases/periodicHillRANS`，图 `docs/validation/periodic_hill_sst.png`） | Breuer 等 2009 LES（分离 0.19、再附 4.69）/ Rapp 2009 实验（`cases/periodicHill/reference`） | 160×2×80 贴体网格，最大非正交 41°，y+ ≤ 0.45 | 分离/再附点、10 个站位 u 剖面 rms 误差 | 分离 0.25、再附 7.6；u 剖面 rms 误差 0.06–0.15 U_b（平均 0.11）；SST 回流区过长是该模型的已知缺陷（文献中同样再附到第二座山中部），剖面形态正确 | ✅ 定性（SIMPLE 2769 步收敛到 1e-6，3.5 分钟） |
+| 周期山 Re_b = 10595 RANS k-ω SST（`cases/periodicHillRANS`，图 `docs/validation/periodic_hill_sst.png`） | Breuer 等 2009 LES（分离 0.19、再附 4.69）/ Rapp 2009 实验（`cases/periodicHill/reference`） | 160×2×80 贴体网格，最大非正交 41°，y+ ≤ 0.45 | 分离/再附点、10 个站位 u 剖面 rms 误差 | 分离 0.25、再附 7.6；u 剖面 rms 误差 0.06–0.15 U_b（平均 0.11）。SST 回流区过长是该模型的已知缺陷：Saïdi 等 2022（J. Comput. Phys. 457, arXiv 2104.09187，表 2）用 k-ω SST 算同一算例得分离 0.270、再附 7.642（其 LES 参考 0.215 / 4.760），与本结果一致 | ✅（与文献 SST 结果定量一致；SIMPLE 2769 步收敛到 1e-6，3.5 分钟） |
 
 ## 四、并行与可复现
 

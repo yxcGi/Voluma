@@ -98,6 +98,9 @@ public:
     const std::vector<Tensor>& gradU() const { return gradU_; }
     // 更新 ∇U（湍流模型使用）
     void updateGradU();
+    // 把当前速度场投影成无散场（解一次 ∇²φ = ∇·φ_f，φ_f −= ∇φ·S，U −= ∇φ；φ 用 p 的边界条件，p 本身不变）。
+    // 用于稳态求解前的初场处理：曲面域内的均匀初场散度很大，SIMPLE 第一步可能发散（与 OpenFOAM potentialFoam 同效）
+    void projectDivergenceFree(int nNonOrthCorr = 2);
 
     // 重启用：通量旧时间层
     std::vector<scalar>& phiOld() { return phiOld_; }

@@ -207,6 +207,11 @@ void runCase(const std::string& caseFile) {
         U.correctBoundaryConditions();
     }
     flow.initialize();
+    if (ini.get("potentialFlow", false)) {
+        // 初场投影成无散场（曲面域、周期域的均匀初场散度很大，稳态第一步可能发散）
+        flow.projectDivergenceFree(int(ini.get("potentialFlowNonOrthCorr", 2.0)));
+        if (par::master()) std::cout << "initial field projected to be divergence-free\n";
+    }
 
     // 湍流模型（缺省为层流）
     std::unique_ptr<TurbulenceModel> turb;

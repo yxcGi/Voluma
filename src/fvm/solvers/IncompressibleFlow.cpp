@@ -30,6 +30,35 @@ void IncompressibleFlow::markRestarted() {
 
 void IncompressibleFlow::updateGradU() { gradU_ = fvc::grad(U_, gradScheme); }
 
+void IncompressibleFlow::projectDivergenceFree(int nNonOrthCorr) {
+    if (!initialized_) initialize();
+    const Mesh& m = *mesh_;
+    const label nT = m.nTotalCells();
+    // 借用 p_ 作为势函数（边界条件相同），结束后恢复
+    const std::vector<scalar> pSaved = p_.internal();
+    p_.setUniform(0.0);
+    p_.correctBoundaryConditions();
+    const bool needRef = pressureNeedsReference();
+    const auto divPhi = fvc::div(m, phi_);
+    for (int no = 0; no <= nNonOrthCorr; ++no) {
+        FvMatrix<scalar> eqn = fvm::laplacian(1.0, p_, laplacianNonOrthCorr);
+        eqn -= divPhi;
+        if (needRef) eqn.setReference(controls.pRefCell, 0.0);
+        eqn.solve(controls.pFinalControls, controls.verbose);
+        if (no == nNonOrthCorr) {
+            const auto F = eqn.flux();
+            for (label f = 0; f < m.nFaces(); ++f) phi_[f] -= F[f];
+        }
+    }
+    const auto gp = fvc::grad(p_, gradScheme);
+    for (label c = 0; c < nT; ++c) U_[c] -= gp[c];
+    if (m.twoD())
+        for (label c = 0; c < nT; ++c) U_[c][m.emptyDir()] = 0.0;
+    U_.correctBoundaryConditions();
+    for (label c = 0; c < nT; ++c) p_[c] = pSaved[c];
+    p_.correctBoundaryConditions();
+}
+
 std::vector<scalar> IncompressibleFlow::nuEffFaces() const {
     const Mesh& m = *mesh_;
     if (nut_.empty()) return std::vector<scalar>(m.nFaces(), nu_);
