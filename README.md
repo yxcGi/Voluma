@@ -72,10 +72,19 @@ mpirun -np 8 ./build/bin/fvmFlow cases/pitzDaily/case.json
 | `cases/cavity3D` | fvmFlow | 三维方腔 Re=1600，四面体网格 |
 | `cases/poiseuille` | fvmFlow | 周期平面 Poiseuille 流（瞬态启动、平均流速驱动），与解析解对比 |
 | `cases/heatSource` | fvmScalar | 带内热源的稳态导热 |
+| `cases/pipe` | fvmFlow | 周期直圆管层流（内置蝶形 O 型网格），与 Hagen-Poiseuille 解析解对比 |
+| `cases/cylinderRe40` `cases/cylinderRe100` | fvmFlow | 二维圆柱绕流（内置 O 型网格）：Re 40 定常回流区、Re 100 卡门涡街，与文献 Cd、St 对比 |
+| `cases/tgv3d` | fvmFlow | 三维 Taylor-Green 涡 Re 1600，与 512³ DNS 的耗散曲线对比（LES 核心验证） |
+| `cases/channel395` `cases/channelWMLES` | fvmFlow | 槽道 RANS（Re_τ 392）与壁模型 LES（Re_τ 1000），与 DNS 对比 |
+| `cases/naca0012` | fvmFlow | NACA0012 Re 1000 二维瞬态，Cd、Cl 与文献对比 |
+| `cases/periodicHillRANS` `cases/periodicHill` | fvmFlow | 周期山 Re_b 10595：二维 k-ω SST（定性）与三维壁模型 LES（需大算力） |
 
 网格在 `meshes/`。
 
 ## 验证
+
+完整的验证记录（每个算例的参考数据、网格、指标、误差、状态）见 [docs/validation.md](docs/validation.md)；
+`ctest -L case` 会重跑其中的快速算例并按容差判定。
 
 | 项目 | 结果 |
 | --- | --- |
