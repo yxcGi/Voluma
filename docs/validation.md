@@ -30,11 +30,11 @@
 
 | 算例 | 参考 | 网格 | 指标 | 结果 | 状态 |
 | --- | --- | --- | --- | --- | --- |
-| 三维 Taylor-Green 涡 Re = 1600（`cases/tgv3d`） | Dairay 等 2017 DNS 512³（Zenodo 2577239） | 64³ 周期盒 | 总耗散 −dk/dt 峰值与时刻（DNS 0.0129 @ 9.0）、[0,20] 上 L2 误差 | 无模型：0.0104 @ 8.4（−19 %），L2 17 %；32³：0.0100 @ 8.9（−22 %）。Smagorinsky / WALE 见下 | ✅ ctest（32³ 至 t=12，容差 30 %） |
+| 三维 Taylor-Green 涡 Re = 1600（`cases/tgv3d`，图 `docs/validation/tgv3d_re1600.png`） | Dairay 等 2017 DNS 512³（Zenodo 2577239） | 64³ 周期盒，dt 0.01，backward + linear | 总耗散 −dk/dt 峰值与时刻（DNS 0.0129 @ 9.0）、[0,20] 上 −dk/dt 与 k 的相对 L2 误差 | 无模型：0.0104 @ 8.4（−19 %），L2 17 % / 4.8 %；WALE（Cw 0.325）：0.0105 @ 8.5（−18 %），L2 25 % / 6.0 %；Smagorinsky（Cs 0.17）：0.0106 @ 7.4（−18 %，峰值提前 1.6），L2 33 % / 7.7 %；32³ 无模型：0.0100 @ 8.9（−22 %）。与文献中二阶有限体积在 64³ 的表现一致：无模型/隐式 LES 最接近，Smagorinsky 早期过耗散使峰值提前，WALE 介于两者之间 | ✅ ctest（32³ 至 t=12，容差 30 %） |
 | RANS 槽道 Re_τ = 392（`cases/channel395`） | Moser 等 DNS | 4×120，y+ ≈ 0.1 | Re_τ | SST 394、k-ω 399、SA 390 | ✅ |
 | RANS 槽道壁面函数 Re_τ ≈ 2000 | DNS 2003 | y+ ≈ 50 | Re_τ | k-ε 1957、SST 1949、realizable 1909 | ✅ |
 | WMLES 槽道 Re_τ = 1000（`cases/channelWMLES`） | Lee & Moser 2015 DNS | 126×63×40 | Re_τ、U+ 误差 | 998.2（1000.5）；30 ≤ y+ ≤ 800 内平均 −0.15 %，首层 −9 % | ✅（5.7 小时，4 进程） |
-| 周期山 Re_b = 10595 RANS k-ω SST（`cases/periodicHillRANS`） | Breuer 等 2009 LES（分离 0.19、再附 4.69）/ Rapp 2009 实验（`cases/periodicHill/reference`） | 160×2×80 贴体网格，最大非正交 41°，y+ ≤ 0.45 | 分离/再附点、10 个站位 u 剖面 rms 误差 | 分离 0.25、再附 7.6；u 剖面 rms 误差 0.06–0.15 U_b（平均 0.11）；SST 回流区过长是该模型的已知缺陷（文献中同样再附到第二座山中部），剖面形态正确 | ✅ 定性（SIMPLE 2769 步收敛到 1e-6，3.5 分钟） |
+| 周期山 Re_b = 10595 RANS k-ω SST（`cases/periodicHillRANS`，图 `docs/validation/periodic_hill_sst.png`） | Breuer 等 2009 LES（分离 0.19、再附 4.69）/ Rapp 2009 实验（`cases/periodicHill/reference`） | 160×2×80 贴体网格，最大非正交 41°，y+ ≤ 0.45 | 分离/再附点、10 个站位 u 剖面 rms 误差 | 分离 0.25、再附 7.6；u 剖面 rms 误差 0.06–0.15 U_b（平均 0.11）；SST 回流区过长是该模型的已知缺陷（文献中同样再附到第二座山中部），剖面形态正确 | ✅ 定性（SIMPLE 2769 步收敛到 1e-6，3.5 分钟） |
 
 ## 四、并行与可复现
 

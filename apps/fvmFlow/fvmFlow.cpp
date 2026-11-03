@@ -98,10 +98,12 @@ struct Monitor {
     IncompressibleFlow& flow;
     std::ofstream file;
     int interval = 1;
-    Monitor(IncompressibleFlow& f, const std::string& path, int iv) : flow(f), interval(iv) {
+    // append 为 true（续算）时接着原文件写，不重写表头
+    Monitor(IncompressibleFlow& f, const std::string& path, int iv, bool append) : flow(f), interval(iv) {
         if (par::master()) {
-            file.open(path);
-            file << "t,k,epsilon,epsilon_sgs,enstrophy\n" << std::setprecision(10);
+            file.open(path, append ? std::ios::app : std::ios::out);
+            if (!append) file << "t,k,epsilon,epsilon_sgs,enstrophy\n";
+            file << std::setprecision(10);
         }
     }
     void sample(scalar t) {
@@ -234,9 +236,10 @@ void runCase(const std::string& caseFile) {
     std::unique_ptr<Monitor> monitor;
     if (cfg.has("monitor")) {
         const Json& mo = cfg["monitor"];
+        const bool resuming = run.has("restartRead");
         monitor = std::make_unique<Monitor>(flow, out + "/" + mo.get("file", std::string("monitor.csv")),
-                                            int(mo.get("interval", 1.0)));
-        monitor->sample(flow.time().time);
+                                            int(mo.get("interval", 1.0)), resuming);
+        if (!resuming) monitor->sample(flow.time().time);
     }
     std::unique_ptr<Probes> probes;
     int probeInterval = 1;
