@@ -1,0 +1,15 @@
+// 周期直圆管层流（Hagen-Poiseuille），Re_D = U_b D/ν = 100，平均流速驱动，稳态 SIMPLE
+//   管径 D = 1（R = 0.5），长 1，蝶形 O 型网格（中央方块 nCore²，环向块径向 nRing，轴向 nAxial）
+//   解析解：u_z(r) = 2 U_b (1 − r²/R²)，中心 2.0；驱动压力梯度 8 ν U_b/R² = 0.32
+//   对比：python3 tools/compare_pipe.py output（沿直径 x 轴与对角线各采样一条）
+{
+  "mesh": { "pipe": { "radius": 0.5, "length": 1.0, "nCore": 8, "nRing": 8, "nAxial": 8, "coreFrac": 0.5, "periodic": true } },
+  "physics": { "nu": 0.01, "steady": true },
+  "forcing": { "type": "meanVelocity", "Ubar": [0, 0, 1] },
+  "initial": { "U": [0, 0, 1] },
+  "schemes": { "div": "linear" },
+  "solution": { "nNonOrthCorr": 1 },
+  "run": { "maxIter": 3000, "residualTol": 1e-8, "printInterval": 100, "vtk": true },
+  "lines": [ { "name": "x", "start": [-0.5, 0, 0.5], "end": [0.5, 0, 0.5], "n": 201 },
+             { "name": "diag", "start": [-0.3535533906, -0.3535533906, 0.5], "end": [0.3535533906, 0.3535533906, 0.5], "n": 201 } ]
+}

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <map>
+#include <tuple>
 #include <stdexcept>
 #include <unordered_map>
 
@@ -46,18 +47,20 @@ void mergeDuplicatePoints(Mesh2D& m, scalar tol) {
     m.points = std::move(pts);
 }
 
-RawMesh extrude2D(const Mesh2D& m, const std::vector<BoundaryPatchSpec>& patches,
-                  const std::function<int(glabel, glabel)>& classify, scalar depth) {
-    const glabel nP = glabel(m.points.size());
+namespace {
+
+struct EdgeUse {
+    glabel cell, a, b;
+};
+struct Internal {
+    glabel own, nei, a, b;  // (a,b) 为 owner 的逆时针走向
+};
+
+// 检查单元逆时针，并把二维网格的边分成内部边（按 owner、neighbour 排序）与各 patch 的边界边（按单元排序）
+void analyseEdges(const Mesh2D& m, const std::vector<BoundaryPatchSpec>& patches,
+                  const std::function<int(glabel, glabel)>& classify, std::vector<Internal>& internal,
+                  std::vector<std::vector<EdgeUse>>& bnd) {
     const glabel nC = glabel(m.cells.size());
-    RawMesh r;
-    r.points.resize(2 * nP);
-    for (glabel i = 0; i < nP; ++i) {
-        r.points[i] = {m.points[i].x, m.points[i].y, 0};
-        r.points[nP + i] = {m.points[i].x, m.points[i].y, depth};
-    }
-    r.nCells = nC;
-    // 检查单元为逆时针
     for (glabel c = 0; c < nC; ++c) {
         const auto& pl = m.cells[c];
         if (pl.size() < 3) throw std::runtime_error("extrude2D: degenerate cell");
@@ -69,10 +72,6 @@ RawMesh extrude2D(const Mesh2D& m, const std::vector<BoundaryPatchSpec>& patches
         }
         if (a <= 0) throw std::runtime_error("extrude2D: cell " + std::to_string(c) + " is not counter-clockwise");
     }
-    // 边 → (单元, a, b)
-    struct EdgeUse {
-        glabel cell, a, b;
-    };
     std::map<std::pair<glabel, glabel>, std::vector<EdgeUse>> edges;
     for (glabel c = 0; c < nC; ++c) {
         const auto& pl = m.cells[c];
@@ -81,11 +80,8 @@ RawMesh extrude2D(const Mesh2D& m, const std::vector<BoundaryPatchSpec>& patches
             edges[{std::min(a, b), std::max(a, b)}].push_back({c, a, b});
         }
     }
-    struct Internal {
-        glabel own, nei, a, b;  // (a,b) 为 owner 的逆时针走向
-    };
-    std::vector<Internal> internal;
-    std::vector<std::vector<EdgeUse>> bnd(patches.size());
+    internal.clear();
+    bnd.assign(patches.size(), {});
     for (auto& [k, uses] : edges) {
         if (uses.size() == 2) {
             const EdgeUse& u0 = uses[0].cell < uses[1].cell ? uses[0] : uses[1];
@@ -101,19 +97,37 @@ RawMesh extrude2D(const Mesh2D& m, const std::vector<BoundaryPatchSpec>& patches
     }
     std::sort(internal.begin(), internal.end(),
               [](const Internal& x, const Internal& y) { return std::tie(x.own, x.nei) < std::tie(y.own, y.nei); });
+    for (auto& list : bnd)
+        std::sort(list.begin(), list.end(), [](const EdgeUse& x, const EdgeUse& y) { return x.cell < y.cell; });
+}
+
+} // namespace
+
+RawMesh extrude2D(const Mesh2D& m, const std::vector<BoundaryPatchSpec>& patches,
+                  const std::function<int(glabel, glabel)>& classify, scalar depth) {
+    const glabel nP = glabel(m.points.size());
+    const glabel nC = glabel(m.cells.size());
+    RawMesh r;
+    r.points.resize(2 * nP);
+    for (glabel i = 0; i < nP; ++i) {
+        r.points[i] = {m.points[i].x, m.points[i].y, 0};
+        r.points[nP + i] = {m.points[i].x, m.points[i].y, depth};
+    }
+    r.nCells = nC;
+    std::vector<Internal> internal;
+    std::vector<std::vector<EdgeUse>> bnd;
+    analyseEdges(m, patches, classify, internal, bnd);
     for (const auto& f : internal) {
         r.addFace({f.a, f.b, nP + f.b, nP + f.a});
         r.owner.push_back(f.own);
         r.neighbour.push_back(f.nei);
     }
     for (std::size_t p = 0; p < patches.size(); ++p) {
-        auto& list = bnd[p];
-        std::sort(list.begin(), list.end(), [](const EdgeUse& x, const EdgeUse& y) { return x.cell < y.cell; });
         RawPatch rp;
         rp.name = patches[p].name;
         rp.type = patches[p].type;
         rp.start = r.nFaces();
-        for (const auto& e : list) {
+        for (const auto& e : bnd[p]) {
             r.addFace({e.a, e.b, nP + e.b, nP + e.a});
             r.owner.push_back(e.cell);
         }
@@ -136,6 +150,85 @@ RawMesh extrude2D(const Mesh2D& m, const std::vector<BoundaryPatchSpec>& patches
     }
     fb.size = r.nFaces() - fb.start;
     r.patches.push_back(fb);
+    return r;
+}
+
+RawMesh extrudeLayers(const Mesh2D& m, const std::vector<BoundaryPatchSpec>& patches,
+                      const std::function<int(glabel, glabel)>& classify, scalar length, int nLayers,
+                      bool periodic, const std::string& name0, const std::string& name1, PatchType type0,
+                      PatchType type1) {
+    if (nLayers < 1) throw std::runtime_error("extrudeLayers: nLayers must be >= 1");
+    const glabel nP = glabel(m.points.size());
+    const glabel nC = glabel(m.cells.size());
+    RawMesh r;
+    r.points.resize(std::size_t(nLayers + 1) * nP);
+    for (int k = 0; k <= nLayers; ++k)
+        for (glabel i = 0; i < nP; ++i) r.points[k * nP + i] = {m.points[i].x, m.points[i].y, length * k / nLayers};
+    r.nCells = nC * nLayers;
+    std::vector<Internal> internal;
+    std::vector<std::vector<EdgeUse>> bnd;
+    analyseEdges(m, patches, classify, internal, bnd);
+    // 内部面：每层的侧面 + 层间面，按 (owner, neighbour) 排序（上三角顺序）
+    struct Face {
+        glabel own, nei;
+        std::vector<glabel> pts;
+    };
+    std::vector<Face> faces;
+    faces.reserve(internal.size() * nLayers + nC * (nLayers - 1));
+    for (int k = 0; k < nLayers; ++k) {
+        const glabel o = k * nP, o1 = (k + 1) * nP, co = k * nC;
+        for (const auto& f : internal) faces.push_back({co + f.own, co + f.nei, {o + f.a, o + f.b, o1 + f.b, o1 + f.a}});
+        if (k + 1 < nLayers)
+            for (glabel c = 0; c < nC; ++c) {
+                std::vector<glabel> pts;
+                for (auto p : m.cells[c]) pts.push_back(o1 + p);  // 逆时针 → 法向 +z，指向上一层单元
+                faces.push_back({co + c, co + nC + c, std::move(pts)});
+            }
+    }
+    std::sort(faces.begin(), faces.end(),
+              [](const Face& x, const Face& y) { return std::tie(x.own, x.nei) < std::tie(y.own, y.nei); });
+    for (auto& f : faces) {
+        r.addFace(f.pts);
+        r.owner.push_back(f.own);
+        r.neighbour.push_back(f.nei);
+    }
+    // 侧面边界
+    for (std::size_t p = 0; p < patches.size(); ++p) {
+        RawPatch rp;
+        rp.name = patches[p].name;
+        rp.type = patches[p].type;
+        rp.start = r.nFaces();
+        for (int k = 0; k < nLayers; ++k) {
+            const glabel o = k * nP, o1 = (k + 1) * nP;
+            for (const auto& e : bnd[p]) {
+                r.addFace({o + e.a, o + e.b, o1 + e.b, o1 + e.a});
+                r.owner.push_back(k * nC + e.cell);
+            }
+        }
+        rp.size = r.nFaces() - rp.start;
+        r.patches.push_back(rp);
+    }
+    // 两端
+    for (int side = 0; side < 2; ++side) {
+        RawPatch rp;
+        rp.name = side == 0 ? name0 : name1;
+        rp.type = periodic ? PatchType::Cyclic : (side == 0 ? type0 : type1);
+        if (periodic) rp.neighbourPatch = side == 0 ? name1 : name0;
+        rp.start = r.nFaces();
+        const glabel o = side == 0 ? 0 : nLayers * nP, co = side == 0 ? 0 : (nLayers - 1) * nC;
+        for (glabel c = 0; c < nC; ++c) {
+            const auto& pl = m.cells[c];
+            std::vector<glabel> f;
+            if (side == 0)
+                for (auto it = pl.rbegin(); it != pl.rend(); ++it) f.push_back(o + *it);  // 法向 −z
+            else
+                for (auto p : pl) f.push_back(o + p);  // 法向 +z
+            r.addFace(f);
+            r.owner.push_back(co + c);
+        }
+        rp.size = r.nFaces() - rp.start;
+        r.patches.push_back(rp);
+    }
     return r;
 }
 
