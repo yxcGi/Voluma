@@ -227,7 +227,7 @@ u、v、w 依次为流向、展向、法向分量；上下两半按到最近壁�
 
 ```jsonc
 "turbulence": {
-  "model": "kOmegaSST",        // laminar（缺省）| Smagorinsky | WALE | kEpsilon | realizableKE | kOmega | kOmegaSST | SpalartAllmaras
+  "model": "kOmegaSST",        // laminar（缺省）| Smagorinsky | WALE | kEpsilon | realizableKE | kOmega | kOmegaSST | BSLEARSM | SpalartAllmaras
   "wallFunctions": true,       // RANS：壁面函数（k-ε 必须；k-ω/SST 的 ω 壁面值对粘性/对数层自动混合，y+≈1 也可用）
   "coeffs": { "betaStar": 0.09 },   // 覆盖模型系数（名称同 OpenFOAM）
   "div": "limitedLinear 1",    // 湍流量对流格式
@@ -247,6 +247,13 @@ wall 类型边界不写时自动设置（k、ε、ω 零梯度，壁面单元的
 其他边界不写时为零梯度并会给出提示，入口一般需要给定值。VTK 输出中会附带这些场和 nut，结束时打印壁面 y+。
 
 LES 系数：Smagorinsky `Cs`（默认 0.17；OpenFOAM 默认相当于 0.168）、WALE `Cw`（0.325）、滤波尺度 `deltaCoeff`（1，Δ = 体积立方根，二维取面积平方根）。
+
+`BSLEARSM`：Menter BSL k-ω + Wallin & Johansson (2000) 显式代数雷诺应力（Fluent/CFX 的 BSL EARSM 同源）。
+各向异性张量用 WJ 的二维解析 N，线性部分给 ν_t = −½β1 τ k，非线性部分作为显式动量源 −∇·τ_ex；
+时间尺度 τ = max(1/(β*ω), `Ctau`√(ν/(β*kω)))（Ctau 6），近壁阻尼 f1 = 1 − exp(−`Cy` √k y/ν)（Cy 0.026）。
+`nutMax`（默认 1）把 ν_t 连同整个各向异性张量限制到 ν_t ≤ nutMax·k/ω：WJ 原模型在弱应变区 C_μ^eff 可达 0.33，
+分离回流区混合偏强（周期山再附 x/H 3.2），限制后为 5.3（LES 4.8，SST 7.6）；设 0 关闭。`nonlinear` 0 可关掉非线性应力（诊断）。
+用于分离流（周期山、后台阶等）时比 SST 明显改善回流区长度；槽道 Re_τ 392 给 385。
 
 验证（`cases/channel395`，Re_τ = 392 的 DNS）：k-ω SST 394、k-ω 399、Spalart-Allmaras 390（y+≈0.1）；
 Re_τ ≈ 2000、y+≈50 用壁面函数时 k-ε 1957、SST 1949、realizable k-ε 1909（DNS 2003）。

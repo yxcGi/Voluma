@@ -225,7 +225,7 @@ std::unique_ptr<TurbulenceModel> TurbulenceModel::create(IncompressibleFlow& flo
     const std::string type = d.get("model", "laminar");
     if (type == "laminar") return nullptr;
     if (type == "Smagorinsky" || type == "WALE") return makeLES(flow, d, boundary, initial, type);
-    if (type == "kEpsilon" || type == "realizableKE" || type == "kOmega" || type == "kOmegaSST" ||
+    if (type == "kEpsilon" || type == "realizableKE" || type == "kOmega" || type == "kOmegaSST" || type == "BSLEARSM" ||
         type == "SpalartAllmaras")
         return makeRAS(flow, d, boundary, initial, type);
     throw std::runtime_error("turbulence.model: unknown model '" + type +

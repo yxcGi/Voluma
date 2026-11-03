@@ -172,6 +172,7 @@ StepInfo IncompressibleFlow::step(scalar dt) {
             }
             UEqn -= fvc::surfaceIntegrate(m, F);
         }
+        if (!turbSource_.empty()) UEqn -= turbSource_;
         if (forcing.mode == MomentumForcing::Mode::Constant) UEqn -= forcing.force;
         if (forcing.mode == MomentumForcing::Mode::MeanVelocity)
             UEqn -= forcing.Ubar * (forcing.gradP / mag(forcing.Ubar));

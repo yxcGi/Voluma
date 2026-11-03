@@ -202,12 +202,62 @@ protected:
 };
 
 // ------------------------------------------------------------------ k-ω（Wilcox 1998）与 k-ω SST（Menter 2003）
+// Wallin & Johansson (2000) 显式代数雷诺应力模型（EARSM）的各向异性张量 a_ij（τ_ij = k(2/3 δ_ij + a_ij)）。
+// S* = τ S，Ω* = τ Ω（τ 为湍流时间尺度）；N 取二维解析解（Menter-Garbaruk-Egorov 2009 的 BSL-EARSM 做法，
+// 三维流动也用它），β 系数与张量基 T1、T3、T4、T6、T9 见 WJ 2000 式 (28)–(32)。返回 β1（< 0，线性部分
+// 对应涡粘 ν_t = −½ β1 τ k）。
+static scalar earsmAnisotropy(const Tensor& gU, scalar tau, Tensor& a) {
+    const Tensor S = tau * symm(gU);
+    const Tensor W = tau * skew(gU);
+    const Tensor W2 = dot(W, W);
+    const scalar IIS = trace(dot(S, S));
+    const scalar IIW = trace(W2);  // ≤ 0
+    const scalar IV = trace(dot(S, W2));
+    const scalar c1p = 1.8;  // (9/4)(C1 − 1)，C1 = 1.8
+    const scalar P1 = (c1p * c1p / 27 + 0.45 * IIS - (2.0 / 3) * IIW) * c1p;
+    const scalar P2 = P1 * P1 - std::pow(c1p * c1p / 9 + 0.9 * IIS + (2.0 / 3) * IIW, 3);
+    scalar N;
+    if (P2 >= 0) {
+        const scalar sq = std::sqrt(P2);
+        N = c1p / 3 + std::cbrt(P1 + sq) + std::cbrt(P1 - sq);
+    } else {
+        const scalar r = std::sqrt(P1 * P1 - P2);
+        N = c1p / 3 + 2 * std::cbrt(r) * std::cos(std::acos(std::clamp(P1 / r, -1.0, 1.0)) / 3);
+    }
+    N = std::max(N, c1p);  // 无应变时 N = c1'，解析解不会小于它
+    const scalar Q = (5.0 / 6) * (N * N - 2 * IIW) * (2 * N * N - IIW);
+    const scalar beta1 = -N * (2 * N * N - 7 * IIW) / Q;
+    const scalar beta3 = -12 * IV / (N * Q), beta4 = -2 * (N * N - 2 * IIW) / Q, beta6 = -6 * N / Q, beta9 = 6 / Q;
+    const Tensor I = identity();
+    const Tensor T3 = W2 - (IIW / 3) * I;
+    const Tensor T4 = dot(S, W) - dot(W, S);
+    const Tensor T6 = dot(S, W2) + dot(W2, S) - IIW * S - (2.0 / 3) * IV * I;
+    const Tensor T9 = dot(dot(W, S), W2) - dot(dot(W2, S), W);
+    a = beta1 * S + beta3 * T3 + beta4 * T4 + beta6 * T6 + beta9 * T9;
+    return beta1;
+}
+
 class KOmega : public RASModel {
 public:
-    KOmega(IncompressibleFlow& f, const Json& d, const Json& b, const Json& i, bool sst)
-        : RASModel(f, d, b, i, true), sst_(sst) {
+    // sst：Menter 2003 SST；earsm：Menter BSL k-ω + Wallin-Johansson EARSM（Fluent/CFX 的 "BSL EARSM"）
+    KOmega(IncompressibleFlow& f, const Json& d, const Json& b, const Json& i, bool sst, bool earsm = false)
+        : RASModel(f, d, b, i, true), sst_(sst), earsm_(earsm) {
         betaStar_ = coeff("betaStar", 0.09);
-        if (sst) {
+        if (earsm) {
+            alphaK1_ = coeff("alphaK1", 0.5);  // BSL 常数（与 SST 只差 σ_k1）
+            alphaK2_ = coeff("alphaK2", 1.0);
+            alphaOmega1_ = coeff("alphaOmega1", 0.5);
+            alphaOmega2_ = coeff("alphaOmega2", 0.856);
+            gamma1_ = coeff("gamma1", 5.0 / 9.0);
+            gamma2_ = coeff("gamma2", 0.44);
+            beta1_ = coeff("beta1", 0.075);
+            beta2_ = coeff("beta2", 0.0828);
+            c1_ = coeff("c1", 10.0);
+            Ctau_ = coeff("Ctau", 6.0);
+            Cy_ = coeff("Cy", 0.026);
+            nonlinear_ = coeff("nonlinear", 1.0);
+            nutMax_ = coeff("nutMax", 1.0);
+        } else if (sst) {
             alphaK1_ = coeff("alphaK1", 0.85);
             alphaK2_ = coeff("alphaK2", 1.0);
             alphaOmega1_ = coeff("alphaOmega1", 0.5);
@@ -233,12 +283,70 @@ public:
         F1_.assign(m_.nTotalCells(), 1.0);
         correctNut(std::vector<scalar>(m_.nTotalCells(), 0.0));
     }
-    std::string type() const override { return sst_ ? "kOmegaSST" : "kOmega"; }
+    std::string type() const override { return earsm_ ? "BSLEARSM" : sst_ ? "kOmegaSST" : "kOmega"; }
 
 protected:
     static scalar blend(scalar F1, scalar a, scalar b) { return F1 * (a - b) + b; }
 
+    // EARSM：由当前 k、ω、∇U 计算 ν_t（线性部分）、生成项 P_k = −k a:∇U 与显式附加应力 τ_ex = k a + 2 ν_t S 的
+    // 散度（写入 flow.turbSource()，作为动量方程显式源 −∇·τ_ex）。所有单元（含幽灵）逐点计算，无需交换。
+    void evalEARSM(std::vector<scalar>* Pk) {
+        auto& nut = flow_.nut();
+        const auto& k = *k_;
+        const auto& w = *omega_;
+        if (flow_.gradU().empty()) flow_.updateGradU();  // 构造时还没有速度梯度
+        const auto& gU = flow_.gradU();
+        const label nT = m_.nTotalCells();
+        std::vector<Tensor> tauEx(nT, Tensor::zero());
+        if (Pk) Pk->assign(nT, 0.0);
+        for (label c = 0; c < nT; ++c) {
+            const scalar kc = std::max(k[c], kSmall), wc = std::max(w[c], kSmall);
+            const scalar tau = std::max(1.0 / (betaStar_ * wc), Ctau_ * std::sqrt(nu_ / (betaStar_ * kc * wc)));
+            Tensor a;
+            const scalar beta1 = earsmAnisotropy(gU[c], tau, a);
+            // 近壁阻尼（Wallin & Johansson 2000）：f1 = 1 − exp(−C_y Re_y)，Re_y = √k y/ν；对数层以上 f1 → 1
+            const scalar Rey = std::sqrt(kc) * (*y_)[c] / nu_;
+            const scalar f1 = Cy_ > 0 ? 1.0 - std::exp(-Cy_ * Rey) : 1.0;
+            a = f1 * a;
+            nut[c] = std::max(-0.5 * f1 * beta1 * tau * kc, 0.0);
+            // 可选上限 ν_t ≤ nutMax·k/ω：WJ 的 C_μ^eff 在弱应变区可达 0.33（k-ω 单位下为 3.7 k/ω），
+            // 分离回流区内混合偏强；nutMax = 1 把它限制到 k-ω 的水平（0 为不限制）。整个 a 同比例缩小，
+            // 使总雷诺应力一起受限（只限 ν_t 会把差额转到显式项，总应力不变）
+            if (nutMax_ > 0 && nut[c] > nutMax_ * kc / wc) {
+                const scalar sc = nutMax_ * kc / wc / nut[c];
+                a = sc * a;
+                nut[c] *= sc;
+            }
+            // 可实现性：|a_ij| ≤ 1（分量上界 4/3，下界 −2/3）
+            for (int p = 0; p < 3; ++p)
+                for (int q = 0; q < 3; ++q) a(p, q) = std::clamp(a(p, q), -1.0, 1.0);
+            if (Pk) (*Pk)[c] = -kc * doubleDot(a, gU[c]);
+            tauEx[c] = nonlinear_ * (kc * a + 2 * nut[c] * symm(gU[c]));  // nonlinear = 0 退化为线性涡粘（诊断用）
+        }
+        // −∇·τ_ex：面插值后与面矢量点乘；壁面上雷诺应力为零
+        const auto tf = fvc::interpolate(m_, tauEx);
+        auto& src = flow_.turbSource();
+        src.assign(nT, Vec3{0, 0, 0});
+        const label nI = m_.nInternalFaces();
+        for (label f = 0; f < nI; ++f) {
+            const Vec3 F = dot(tf[f], m_.Sf()[f]);
+            src[m_.owner()[f]] -= F;
+            src[m_.neighbour()[f]] += F;
+        }
+        for (const auto& pt : m_.patches()) {
+            if (pt.type == PatchType::Wall || pt.type == PatchType::Empty) continue;
+            for (label f = pt.start; f < pt.end(); ++f) src[m_.owner()[f]] -= dot(tf[f], m_.Sf()[f]);
+        }
+        for (label c = 0; c < m_.nCells(); ++c) src[c] = src[c] / m_.V()[c];
+        if (m_.twoD())
+            for (label c = 0; c < m_.nCells(); ++c) src[c][m_.emptyDir()] = 0.0;
+    }
+
     void correctNut(const std::vector<scalar>& S2) {
+        if (earsm_) {
+            evalEARSM(nullptr);
+            return;
+        }
         auto& nut = flow_.nut();
         const auto& k = *k_;
         const auto& w = *omega_;
@@ -265,10 +373,11 @@ protected:
         const label nC = m_.nCells(), nT = m_.nTotalCells();
         const auto gbn0 = GbyNu();
         const auto& gU = flow_.gradU();
-        std::vector<scalar> S2(nT, 0.0), G(nT, 0.0);
+        std::vector<scalar> S2(nT, 0.0), G(nT, 0.0), PkE;
+        if (earsm_) evalEARSM(&PkE);  // 同时更新 ν_t 与动量源
         for (label c = 0; c < nC; ++c) {
             S2[c] = 2 * magSqr(symm(gU[c]));
-            G[c] = nut[c] * gbn0[c];
+            G[c] = earsm_ ? PkE[c] : nut[c] * gbn0[c];
         }
         m_.halo().exchange(S2);
 
@@ -303,7 +412,7 @@ protected:
             }
 
         std::vector<scalar> Sp(nT, 0.0), Su(nT, 0.0), Dw(nT), Dk(nT);
-        if (sst_) {
+        if (sst_ || earsm_) {
             // 交叉扩散与混合函数 F1
             const auto gk = fvc::grad(k), gw = fvc::grad(w);
             std::vector<scalar> CD(nT, 0.0);
@@ -332,8 +441,9 @@ protected:
                                              100.0);
                 const scalar F2 = std::tanh(arg2 * arg2);
                 const scalar GbyNu = std::min(gbn0[c], (c1_ / a1_) * betaStar_ * wc * std::max(a1_ * wc, b1_ * F2 * std::sqrt(S2[c])));
-                // 壁面单元用修正后的 G（对数律）换算
-                const scalar gbn = logG[c] ? G[c] / std::max(nut[c], kSmall) : GbyNu;
+                // 壁面单元用修正后的 G（对数律）换算；EARSM 用 γ ω/k P_k（限 c1 β* ω²）
+                const scalar gbn = earsm_ ? std::min(G[c], c1_ * betaStar_ * std::max(k[c], 0.0) * wc) * wc / std::max(k[c], kSmall)
+                                 : logG[c] ? G[c] / std::max(nut[c], kSmall) : GbyNu;
                 Su[c] = gamma * gbn;
                 Sp[c] = beta * wc;
                 // −(F1 − 1) CD/ω · ω：系数为负时作显式源项，为正时作隐式汇项
@@ -356,7 +466,7 @@ protected:
         bound(w, kSmall);
 
         for (label c = 0; c < nC; ++c) {
-            Su[c] = sst_ ? std::min(G[c], c1_ * betaStar_ * std::max(k[c], 0.0) * w[c]) : G[c];
+            Su[c] = (sst_ || earsm_) ? std::min(G[c], c1_ * betaStar_ * std::max(k[c], 0.0) * w[c]) : G[c];
             Sp[c] = betaStar_ * w[c];
         }
         solveTransport(k, Dk, Sp, Su);
@@ -366,7 +476,8 @@ protected:
         kWallNut(k);
     }
 
-    bool sst_;
+    bool sst_, earsm_ = false;
+    scalar Ctau_ = 6.0, Cy_ = 0.026, nonlinear_ = 1.0, nutMax_ = 1.0;
     ScalarField* k_ = nullptr;
     ScalarField* omega_ = nullptr;
     const std::vector<scalar>* y_ = nullptr;
@@ -451,6 +562,7 @@ std::unique_ptr<TurbulenceModel> makeRAS(IncompressibleFlow& flow, const Json& d
     if (type == "realizableKE") return std::make_unique<KEpsilon>(flow, d, b, i, true);
     if (type == "kOmega") return std::make_unique<KOmega>(flow, d, b, i, false);
     if (type == "kOmegaSST") return std::make_unique<KOmega>(flow, d, b, i, true);
+    if (type == "BSLEARSM") return std::make_unique<KOmega>(flow, d, b, i, false, true);
     return std::make_unique<SpalartAllmaras>(flow, d, b, i);
 }
 
