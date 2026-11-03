@@ -1,0 +1,21 @@
+// WMLES 采样高度扫描 smag_s1.5：Smagorinsky（Cs 0.2，同 OpenLB）+ Van Driest，采样 第 2 层，y_s+ ≈ 75
+// 与 OpenLB channel3d_unified N40 的跨家族矩阵逐点对应（OpenLB 的 s1.5/2.5/3.5 格 = 这里 0.075/0.125/0.175）：
+//   Re_τ = 1000.5（Lee & Moser 2015），半高 H = 1，ν = 5e-5，体力保持 U_b = 1；z 为壁面法向
+//   法向 40 层均匀网格，首层中心 y+ ≈ 25（OpenLB 25.7）；Δx = Δy ≈ 0.05；流向 2πH，展向 πH（OpenLB 2πH）
+//   Spalding 壁面律 κ = 0.4、B = 5.5（同 OpenLB 的壁模型常数）；采样点取离壁 samplingHeight 最近的单元中心（不插值，同 OpenLB 默认）
+//   T_c = H/u_τ ≈ 20：前 30 T_c 发展，之后 20 T_c 统计（OpenLB 为 126 + 31.4 T_c）
+// 运行：tools/run_channel_sweep.sh <输出目录> [每算例进程数] [并发算例数]；汇总：tools/collect_channel_sweep.sh <输出目录>
+{
+  "mesh": { "box": { "n": [126, 63, 40], "hi": [6.283185307179586, 3.141592653589793, 2],
+                     "periodic": [true, true, false], "walls": ["zMin", "zMax"] } },
+  "physics": { "nu": 5e-5, "steady": false },
+  "forcing": { "type": "meanVelocity", "Ubar": [1, 0, 0] },
+  "turbulence": { "model": "Smagorinsky", "vanDriest": true, "coeffs": { "Cs": 0.2 },
+                  "wallModel": { "type": "spalding", "kappa": 0.4, "B": 5.5, "samplingHeight": 0.075 } },
+  "initial": { "channel": { "Ubulk": 1, "streamwise": 0, "normal": 2, "walls": [0, 2], "amplitude": 0.1, "noise": 0.05 } },
+  "schemes": { "div": "linear", "ddt": "backward" },
+  "solution": { "nOuter": 1, "nCorr": 2, "nNonOrthCorr": 0 },
+  "run": { "endTime": 1000, "maxCo": 0.5, "maxDt": 0.05, "writeInterval": 100, "output": "output",
+           "printInterval": 200, "restartWrite": "restart", "vtk": false },
+  "channelStatistics": { "streamwise": 0, "normal": 2, "walls": [0, 2], "start": 600 }
+}
