@@ -193,6 +193,15 @@ StepInfo IncompressibleFlow::step(scalar dt) {
             UEqn -= fvc::surfaceIntegrate(m, F);
         }
         if (!turbSource_.empty()) UEqn -= turbSource_;
+        // 单元体力（浮力等）不进入 H：按 OpenFOAM 浮力求解器的做法以面通量 φ_F = f_f·S_f 进入压力方程与速度修正，
+        // 预测步用 reconstruct(φ_F − ∇p_f·S_f)，使体力与压力梯度在面上严格平衡（静水平衡不产生伪速度）
+        const bool hasBF = !bodyForce_.empty();
+        std::vector<scalar> phiF;
+        if (hasBF) {
+            const auto ff = fvc::interpolate(m, bodyForce_);
+            phiF.resize(m.nFaces());
+            for (label f = 0; f < m.nFaces(); ++f) phiF[f] = dot(ff[f], m.Sf()[f]);
+        }
         if (forcing.mode == MomentumForcing::Mode::Constant) UEqn -= forcing.force;
         if (forcing.mode == MomentumForcing::Mode::MeanVelocity)
             UEqn -= forcing.Ubar * (forcing.gradP / mag(forcing.Ubar));
@@ -202,9 +211,16 @@ StepInfo IncompressibleFlow::step(scalar dt) {
 
         if (ctl.momentumPredictor) {
             FvMatrix<Vec3> M(UEqn);
-            const auto gp = fvc::grad(p_, gradScheme);
             std::vector<Vec3> ngp(nT);
-            for (label c = 0; c < nT; ++c) ngp[c] = -gp[c];
+            if (hasBF) {
+                const auto gpF = fvm::laplacian(1.0, p_, laplacianNonOrthCorr).flux();
+                std::vector<scalar> d(m.nFaces());
+                for (label f = 0; f < m.nFaces(); ++f) d[f] = phiF[f] - gpF[f];
+                ngp = fvc::reconstruct(m, d);
+            } else {
+                const auto gp = fvc::grad(p_, gradScheme);
+                for (label c = 0; c < nT; ++c) ngp[c] = -gp[c];
+            }
             M -= ngp;
             auto perf = M.solve(ctl.UControls, ctl.verbose);
             if (outer == 0 && !perf.empty()) {
@@ -272,6 +288,9 @@ StepInfo IncompressibleFlow::step(scalar dt) {
                     phiHbyA[f] = extrapolate ? dot(HbyA[m.owner()[f]], m.Sf()[f]) : dot(U_.bValue(f), m.Sf()[f]);
                 }
             }
+            // 体力的面通量（含边界面：定通量边界上经 fixedFluxPressure 给出 ∂p/∂n = f·n）
+            if (hasBF)
+                for (label f = 0; f < m.nFaces(); ++f) phiHbyA[f] += rAUf[f] * phiF[f];
             if (!steady && ctl.ddtPhiCoeff != 0.0) {
                 const auto k = fvm::ddtCoeffs(ddtS, ts_, U_.nOldTimes() >= 2 && !phiOldOld_.empty());
                 const auto& U0 = U_.old();
@@ -324,8 +343,17 @@ StepInfo IncompressibleFlow::step(scalar dt) {
                 for (label c = 0; c < nT; ++c) p_[c] = pPrev[c] + ctl.alphaP * (p_[c] - pPrev[c]);
                 p_.correctBoundaryConditions();
             }
-            const auto gp = fvc::grad(p_, gradScheme);
-            for (label c = 0; c < nT; ++c) U_[c] = HbyA[c] - rAU_[c] * gp[c];
+            if (hasBF) {
+                // U = HbyA + rAU reconstruct(φ_F − ∇p_f·S_f)（压力松弛后的 p）
+                const auto pF = fvm::laplacian(rAUf, p_, laplacianNonOrthCorr).flux();
+                std::vector<scalar> d(m.nFaces());
+                for (label f = 0; f < m.nFaces(); ++f) d[f] = phiF[f] - pF[f] / rAUf[f];
+                const auto rec = fvc::reconstruct(m, d);
+                for (label c = 0; c < nT; ++c) U_[c] = HbyA[c] + rAU_[c] * rec[c];
+            } else {
+                const auto gp = fvc::grad(p_, gradScheme);
+                for (label c = 0; c < nT; ++c) U_[c] = HbyA[c] - rAU_[c] * gp[c];
+            }
             if (m.twoD())
                 for (label c = 0; c < nT; ++c) U_[c][m.emptyDir()] = 0.0;
             U_.correctBoundaryConditions();

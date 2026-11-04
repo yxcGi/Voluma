@@ -30,6 +30,43 @@ template <class T> std::vector<T> interpolate(const Mesh& m, const std::vector<T
     return F;
 }
 
+// 由面通量 φ_f = v_f·S_f 重构单元矢量（OpenFOAM fvc::reconstruct）：v_P = [Σ_f S_f S_f/|S_f|]⁻¹ Σ_f S_f φ_f/|S_f|，
+// 两项都与面的朝向无关；用于把面上平衡的体力与压力梯度一致地回到单元（静水平衡时结果精确为零）。幽灵单元经 halo 交换。
+inline std::vector<Vec3> reconstruct(const Mesh& m, const std::vector<scalar>& ssf) {
+    const label nT = m.nTotalCells(), nC = m.nCells(), nI = m.nInternalFaces();
+    std::vector<Tensor> A(nT, Tensor::zero());
+    std::vector<Vec3> b(nT, Vec3{0, 0, 0});
+    auto acc = [&](label c, label f) {
+        const Vec3& S = m.Sf()[f];
+        const scalar ms = m.magSf()[f];
+        A[c] += outer(S, S) / ms;
+        b[c] += (ssf[f] / ms) * S;
+    };
+    for (label f = 0; f < nI; ++f) {
+        acc(m.owner()[f], f);
+        acc(m.neighbour()[f], f);
+    }
+    for (label f = nI; f < m.nFaces(); ++f) acc(m.owner()[f], f);
+    std::vector<Vec3> v(nT, Vec3{0, 0, 0});
+    // 二维网格没有空方向的面，A 在该方向奇异：补一个单位对角元（该方向 b = 0，结果为零）
+    const int ed = m.twoD() ? m.emptyDir() : -1;
+    for (label c = 0; c < nC; ++c) {
+        if (ed >= 0) (&A[c].xx)[ed * 3 + ed] += 1.0;
+        const Tensor& t = A[c];
+        // 3×3 对称矩阵求逆（伴随矩阵）
+        const scalar c00 = t.yy * t.zz - t.yz * t.zy, c01 = t.yz * t.zx - t.yx * t.zz, c02 = t.yx * t.zy - t.yy * t.zx;
+        const scalar det = t.xx * c00 + t.xy * c01 + t.xz * c02;
+        if (std::abs(det) < 1e-300) continue;
+        const scalar c10 = t.xz * t.zy - t.xy * t.zz, c11 = t.xx * t.zz - t.xz * t.zx, c12 = t.xy * t.zx - t.xx * t.zy;
+        const scalar c20 = t.xy * t.yz - t.xz * t.yy, c21 = t.xz * t.yx - t.xx * t.yz, c22 = t.xx * t.yy - t.xy * t.yx;
+        const Vec3& r = b[c];
+        v[c] = Vec3{c00 * r.x + c10 * r.y + c20 * r.z, c01 * r.x + c11 * r.y + c21 * r.z,
+                    c02 * r.x + c12 * r.y + c22 * r.z} / det;
+    }
+    m.halo().exchange(v);
+    return v;
+}
+
 // 偏斜修正的面插值：φ_f = w φ_P + (1−w) φ_N + (x_f − x'_f)·∇φ_f（∇φ_f 为单元梯度的线性插值）。
 // 偏斜网格（四面体、三角形）上线性插值点 x'_f 不在面心，不修正时面值有一阶误差；无偏斜网格原样返回。
 template <class T>

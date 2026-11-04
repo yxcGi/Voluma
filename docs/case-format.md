@@ -57,6 +57,7 @@ Fluent 按 zone 类型（wall / symmetry / 其余为 patch），都可以用 `pa
 | 键 | fvmFlow | fvmScalar |
 | --- | --- | --- |
 | `nu` | 运动粘度 | |
+| （传热见 `energy` 节） | | |
 | `steady` | true：SIMPLE 稳态；false：PIMPLE 瞬态 | 稳态 / 瞬态 |
 | `field` | | 标量名，默认 `T` |
 | `diffusivity` | | 扩散系数 Γ |
@@ -291,6 +292,38 @@ u、v、w 依次为流向、展向、法向分量；上下两半按到最近壁�
 写 `output/hill/profile_xh_<站>.csv`（`y_h;u_Ub;v_Ub;uu_Ub2;vv_Ub2;ww_Ub2;uv_Ub2;k_Ub2`，v 为法向、ww 为展向）
 和 `wall_<wall>.csv`（`x_h;Cf;Cp;ut_Ub`），并打印按 Cf 变号求得的分离点、再附点。
 与实验对比：`tools/compare_hill.py output/hill --ref <UFR3-30 实验数据目录> --out hill.png`。
+
+## energy（仅 fvmFlow）
+
+能量方程（常物性不可压；温度 T 为运动学量，热流以 q/(ρ c_p) 计，单位 K·m/s）：
+
+```jsonc
+"energy": {
+  "Pr": 0.71,                     // 分子普朗特数（α = ν/Pr），或直接给 "alpha"
+  "Prt": 0.85,                    // 湍流普朗特数：α_eff = α + ν_t/Pr_t
+  "source": 0,                    // 均匀体积热源 Q/(ρ c_p)（K/s）
+  "buoyancy": { "g": [0, -9.81, 0], "beta": 3.4e-3, "TRef": 300 },  // Boussinesq：f = −β (T − T_ref) g
+  "wallFunction": "jayatilleke",  // RANS 壁面函数网格上的热壁面律：jayatilleke（默认）| kader | none
+  "nusselt": { "L": 1, "deltaT": 1 },  // 结束时各壁面 patch 的 Nu = q̄ L / (α ΔT)
+  "div": "linearUpwind", "relax": 0.7, "solver": { "solver": "PBiCGStab", "preconditioner": "DILU" }
+}
+```
+
+边界：`boundary.<patch>.T` 可用 `fixedValue`（等温）、`zeroGradient`（绝热，壁面缺省）、`fixedGradient`、`robin` 等通用类型，
+以及 `{"type": "heatFlux", "q": 0.1}`（给定进入流体的热流 q/(ρ c_p)，按当前壁面 α_eff,w 换算为法向梯度）。初值 `initial.T`。
+
+- 浮力：p 为去掉参考静水压的动压，壁面 p 自动取 `fixedFluxPressure`（体力进入 φ_HbyA，线性体力 / 二次压力的离散平衡精确，
+  稳定分层的静止方腔不产生伪速度）。
+- 壁面扩散系数：壁面 ν_eff,w = ν（低 Re、LES）时 α_eff,w = α；RANS 壁面函数（ν_eff,w > ν）时 α_eff,w = ν y+/T+(y+)，
+  y+ 由壁面函数给出的切应力反算（u_τ² = ν_eff,w U_t/y，与动量方程一致）。Jayatilleke：T+ = Pr y+（y+ < y+_T）
+  或 Pr_t[ln(E y+)/κ + P]，P = 9.24[(Pr/Pr_t)^{3/4} − 1][1 + 0.28 e^{−0.007 Pr/Pr_t}]（Fluent / OpenFOAM
+  alphatJayatillekeWallFunction）；Kader 1981 全 y+ 混合律 T+ = Pr y+ e^{−Γ} + [2.12 ln(1 + y+) + β(Pr)] e^{−1/Γ}。
+- 输出：T 写入 VTK / Tecplot / 采样线（`line_<name>_T.csv`）与续算；结束时打印各壁面 patch 的面积、总热流、平均热流、
+  平均壁温与 Nu，并写逐面表 `output/wallHeatFlux_<patch>.csv`（x y z q Tw）。稳态收敛判据同时要求 T 方程残差 < residualTol。
+- 求解顺序：每个时间步 / SIMPLE 迭代先解流动再解 T（T 对浮力滞后一步）。
+
+验证见 `docs/validation.md`：de Vahl Davis 差分加热方腔 Ra 1e3–1e6（`cases/naturalConvection`）、Graetz 层流圆管热入口段
+（`cases/graetz`）、湍流槽道传热（`cases/channelHeat`：SST 低 Re、k-ε 壁面函数 + Jayatilleke / Kader）。
 
 ## turbulence（仅 fvmFlow）
 

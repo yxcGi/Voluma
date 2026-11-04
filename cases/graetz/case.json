@@ -1,0 +1,223 @@
+// Graetz 问题：充分发展层流圆管（抛物线入口剖面）、壁温阶跃，热入口段的局部 Nu_x(x*) 与级数解比较
+//   D = 1，U_b = 1，Re_D = 100，Pr = 1（Pe = 100），x* = x/(D Pe)，管长 20 → x* 到 0.2（Nu → 3.657）
+//   入口 T = 0，壁面 T = 1，出口零梯度；沿径向在 9 个站位采样 U、T 以求体温 T_b（lines）
+//   对比：python3 tools/compare_graetz.py output --pe 100（局部 Nu_x = q_w D/(α (T_w − T_b)) 对级数解）
+{
+  "mesh": {
+    "pipe": {
+      "radius": 0.5,
+      "length": 20.0,
+      "nCore": 10,
+      "nRing": 12,
+      "nAxial": 200,
+      "coreFrac": 0.5,
+      "stretch": 1.6,
+      "periodic": false
+    }
+  },
+  "physics": {
+    "nu": 0.01,
+    "steady": true
+  },
+  "energy": {
+    "alpha": 0.01,
+    "nusselt": {
+      "L": 1.0,
+      "deltaT": 1.0
+    }
+  },
+  "boundary": {
+    "inlet": {
+      "U": {
+        "type": "fixedValue",
+        "parabolic": {
+          "Ubulk": 1,
+          "radius": 0.5
+        }
+      },
+      "p": {
+        "type": "zeroGradient"
+      },
+      "T": {
+        "type": "fixedValue",
+        "value": 0.0
+      }
+    },
+    "outlet": {
+      "U": {
+        "type": "zeroGradient"
+      },
+      "p": {
+        "type": "fixedValue",
+        "value": 0.0
+      },
+      "T": {
+        "type": "zeroGradient"
+      }
+    },
+    "wall": {
+      "T": {
+        "type": "fixedValue",
+        "value": 1.0
+      }
+    }
+  },
+  "initial": {
+    "U": [
+      0,
+      0,
+      1
+    ],
+    "p": 0,
+    "T": 0.0
+  },
+  "schemes": {
+    "div": "linearUpwind"
+  },
+  "solution": {
+    "nNonOrthCorr": 1
+  },
+  "run": {
+    "maxIter": 3000,
+    "residualTol": 1e-07,
+    "printInterval": 100,
+    "vtk": false
+  },
+  "lines": [
+    {
+      "name": "st0.5",
+      "start": [
+        0,
+        0,
+        0.5
+      ],
+      "end": [
+        0.5,
+        0,
+        0.5
+      ],
+      "n": 80,
+      "interpolate": true
+    },
+    {
+      "name": "st1",
+      "start": [
+        0,
+        0,
+        1
+      ],
+      "end": [
+        0.5,
+        0,
+        1
+      ],
+      "n": 80,
+      "interpolate": true
+    },
+    {
+      "name": "st2",
+      "start": [
+        0,
+        0,
+        2
+      ],
+      "end": [
+        0.5,
+        0,
+        2
+      ],
+      "n": 80,
+      "interpolate": true
+    },
+    {
+      "name": "st3",
+      "start": [
+        0,
+        0,
+        3
+      ],
+      "end": [
+        0.5,
+        0,
+        3
+      ],
+      "n": 80,
+      "interpolate": true
+    },
+    {
+      "name": "st5",
+      "start": [
+        0,
+        0,
+        5
+      ],
+      "end": [
+        0.5,
+        0,
+        5
+      ],
+      "n": 80,
+      "interpolate": true
+    },
+    {
+      "name": "st7",
+      "start": [
+        0,
+        0,
+        7
+      ],
+      "end": [
+        0.5,
+        0,
+        7
+      ],
+      "n": 80,
+      "interpolate": true
+    },
+    {
+      "name": "st10",
+      "start": [
+        0,
+        0,
+        10
+      ],
+      "end": [
+        0.5,
+        0,
+        10
+      ],
+      "n": 80,
+      "interpolate": true
+    },
+    {
+      "name": "st14",
+      "start": [
+        0,
+        0,
+        14
+      ],
+      "end": [
+        0.5,
+        0,
+        14
+      ],
+      "n": 80,
+      "interpolate": true
+    },
+    {
+      "name": "st18",
+      "start": [
+        0,
+        0,
+        18
+      ],
+      "end": [
+        0.5,
+        0,
+        18
+      ],
+      "n": 80,
+      "interpolate": true
+    }
+  ]
+}

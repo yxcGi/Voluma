@@ -1,0 +1,122 @@
+// 差分加热方腔（de Vahl Davis 1983 基准）Ra = 1e+04，Pr = 0.71，64×64 两向 tanh 加密；ν = sqrt(Pr/Ra)，α = 1/sqrt(Ra Pr)，gβ = 1，T_ref = 0.5
+//   指标：热壁平均 Nu（wall heat flux hot 行）、x = 0.5 竖直中线 u_max、y = 0.5 水平中线 v_max（以 α/L 无量纲）
+{
+  "mesh": {
+    "box": {
+      "n": [
+        64,
+        64,
+        1
+      ],
+      "hi": [
+        1,
+        1,
+        0.1
+      ],
+      "twoD": true,
+      "walls": [
+        "xMin",
+        "xMax",
+        "yMin",
+        "yMax"
+      ],
+      "names": {
+        "xMin": "hot",
+        "xMax": "cold",
+        "yMin": "bottom",
+        "yMax": "top"
+      },
+      "stretch": {
+        "x": 1.5,
+        "y": 1.5
+      }
+    }
+  },
+  "physics": {
+    "nu": 0.008426149773176359,
+    "steady": true
+  },
+  "energy": {
+    "alpha": 0.011867816581938534,
+    "buoyancy": {
+      "g": [
+        0,
+        -1,
+        0
+      ],
+      "beta": 1.0,
+      "TRef": 0.5
+    },
+    "nusselt": {
+      "L": 1.0,
+      "deltaT": 1.0
+    },
+    "relax": 0.7
+  },
+  "boundary": {
+    "hot": {
+      "T": {
+        "type": "fixedValue",
+        "value": 1.0
+      }
+    },
+    "cold": {
+      "T": {
+        "type": "fixedValue",
+        "value": 0.0
+      }
+    }
+  },
+  "initial": {
+    "U": [
+      0,
+      0,
+      0
+    ],
+    "p": 0,
+    "T": 0.5
+  },
+  "schemes": {
+    "div": "linearUpwind"
+  },
+  "solution": {
+    "alphaU": 0.7,
+    "alphaP": 0.3
+  },
+  "run": {
+    "maxIter": 4000,
+    "residualTol": 1e-07,
+    "printInterval": 200,
+    "vtk": false
+  },
+  "lines": [
+    {
+      "name": "xMid",
+      "start": [
+        0.5,
+        0,
+        0.05
+      ],
+      "end": [
+        0.5,
+        1,
+        0.05
+      ],
+      "n": 200
+    },
+    {
+      "name": "yMid",
+      "start": [
+        0,
+        0.5,
+        0.05
+      ],
+      "end": [
+        1,
+        0.5,
+        0.05
+      ],
+      "n": 200
+    }
+  ]
+}

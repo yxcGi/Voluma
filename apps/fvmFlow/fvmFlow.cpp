@@ -9,6 +9,7 @@
 #include "fvm/io/Restart.h"
 #include "fvm/io/TecplotWriter.h"
 #include "fvm/io/VtkWriter.h"
+#include "fvm/models/Energy.h"
 #include "fvm/models/TurbulenceModel.h"
 #include "fvm/post/ChannelStatistics.h"
 #include "fvm/post/Forces.h"
@@ -190,7 +191,10 @@ void runCase(const std::string& caseFile) {
     const Json& bnd = cfg["boundary"];
     flow.context().caseDir = dir;
     setBoundaryConditions(flow.U(), bnd, Json::parse(R"({"type":"noSlip"})"), &flow.context());
-    setBoundaryConditions(flow.p(), bnd, Json::parse(R"({"type":"zeroGradient"})"), &flow.context());
+    const bool buoyant = cfg.has("energy") && cfg["energy"].has("buoyancy");
+    setBoundaryConditions(flow.p(), bnd,
+                          Json::parse(buoyant ? R"({"type":"fixedFluxPressure"})" : R"({"type":"zeroGradient"})"),
+                          &flow.context());
     const Json& ini = cfg["initial"];
     flow.U().setUniform(ini.get("U", Vec3{0, 0, 0}));
     flow.p().setUniform(ini.get("p", 0.0));
@@ -215,6 +219,14 @@ void runCase(const std::string& caseFile) {
     std::unique_ptr<TurbulenceModel> turb;
     if (cfg.has("turbulence")) turb = TurbulenceModel::create(flow, cfg["turbulence"], bnd, ini);
     if (turb && par::master()) std::cout << "turbulence model: " << turb->type() << '\n';
+    // 能量方程（可选）：温度输运 + Boussinesq 浮力 + 热壁面函数
+    std::unique_ptr<EnergyModel> energy;
+    if (cfg.has("energy")) {
+        energy = std::make_unique<EnergyModel>(flow, cfg["energy"], bnd, ini);
+        if (par::master())
+            std::cout << "energy: alpha " << energy->alpha() << " Prt " << energy->Prt()
+                      << (energy->buoyant() ? " with Boussinesq buoyancy" : "") << '\n';
+    }
 
     // 运行控制与输出
     const Json& run = cfg["run"];
@@ -223,6 +235,7 @@ void runCase(const std::string& caseFile) {
         const std::string rd = resolvePath(dir, run["restartRead"].string());
         if (!restart::read(rd, flow)) throw std::runtime_error("restart data not found in " + rd);
         if (turb) turb->readRestart(rd);
+        if (energy) energy->readRestart(rd);
         std::cout << "restarted from " << rd << " at t = " << flow.time().time << '\n';
     }
     const std::string restartDir = run.has("restartWrite") ? resolvePath(dir, run["restartWrite"].string()) : "";
@@ -234,6 +247,8 @@ void runCase(const std::string& caseFile) {
         for (auto* f : turb->fields()) vtk.add(*f);
         vtk.add("nut", flow.nut());
     }
+    if (energy)
+        for (auto* f : energy->fields()) vtk.add(*f);
     const bool writeVtk = run.get("vtk", true);
 
     std::unique_ptr<Monitor> monitor;
@@ -386,6 +401,8 @@ void runCase(const std::string& caseFile) {
                 for (auto* f : turb->fields()) line.writeTable(out + "/line_" + name + "_" + f->name() + ".csv", *f);
                 line.writeTable(out + "/line_" + name + "_nut.csv", flow.nut().data(), 1, "nut");
             }
+            if (energy)
+                for (auto* f : energy->fields()) line.writeTable(out + "/line_" + name + "_" + f->name() + ".csv", *f);
         }
     };
 
@@ -399,13 +416,17 @@ void runCase(const std::string& caseFile) {
         int it = 0;
         for (it = 1; it <= maxIter; ++it) {
             const StepInfo info = flow.step(1.0);
+            const scalar TRes = energy ? energy->correct() : 0.0;
             if (!std::isfinite(info.UInitialResidual) || !std::isfinite(info.pInitialResidual) ||
-                !std::isfinite(info.continuityError))
+                !std::isfinite(info.continuityError) || !std::isfinite(TRes))
                 throw std::runtime_error("solution diverged (non-finite residual) at iteration " + std::to_string(it));
-            const bool conv = it > 1 && info.UInitialResidual < tol && info.pInitialResidual < tol;
-            if (it == 1 || it % printInterval == 0 || conv)
+            const bool conv = it > 1 && info.UInitialResidual < tol && info.pInitialResidual < tol && TRes < tol;
+            if (it == 1 || it % printInterval == 0 || conv) {
                 std::cout << "iter " << it << "  U res " << info.UInitialResidual << "  p res " << info.pInitialResidual
-                          << "  cont " << info.continuityError << '\n';
+                          << "  cont " << info.continuityError;
+                if (energy) std::cout << "  T res " << TRes;
+                std::cout << '\n';
+            }
             if (turb && (it == 1 || it % printInterval == 0)) turb->printYPlus(std::cout);
             if (probes && it % probeInterval == 0) probes->sample(it);
             if (fm && (it % fm->interval == 0 || conv)) sampleForces(it, 0.0, true);
@@ -450,6 +471,7 @@ void runCase(const std::string& caseFile) {
                 }
             }
             const StepInfo info = flow.step(dt);
+            if (energy) energy->correct();
             ++n;
             if (!std::isfinite(info.maxCo) || !std::isfinite(info.continuityError))
                 throw std::runtime_error("solution diverged (non-finite Courant number / continuity error) at t = " +
@@ -495,15 +517,21 @@ void runCase(const std::string& caseFile) {
                       << '\n';
         fm->f->writeSurface(out + "/surface.csv", fm->Uref, fm->dragDir);
     }
+    if (energy) {
+        energy->printWallHeatFlux(std::cout);
+        energy->writeWallHeatFlux(out);
+    }
     if (run.get("tecplot", false)) {
         TecplotWriter tp(mesh);
         tp.add(flow.U());
         tp.add(flow.p());
+        if (energy) tp.add(energy->T());
         tp.write(out + "/fields.dat", "U_p");
     }
     if (!restartDir.empty()) {
         restart::write(restartDir, flow);
         if (turb) turb->writeRestart(restartDir);
+        if (energy) energy->writeRestart(restartDir);
     }
     if (turb) turb->printYPlus(std::cout);
     if (flow.forcing.mode == MomentumForcing::Mode::MeanVelocity) std::cout << "forcing gradP " << flow.forcing.gradP << '\n';

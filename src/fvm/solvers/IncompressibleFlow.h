@@ -81,6 +81,9 @@ public:
     const std::vector<scalar>& nut() const { return nut_; }
     // 壁面面上的有效粘度覆盖（边界面编号 → ν_eff），为空表示不覆盖
     std::vector<scalar>& wallNuEff() { return wallNuEff_; }
+    // 单元体力（单位质量，长度 nTotalCells；空表示无）：浮力等，进入动量方程源项与 HbyA（壁面 p 应配 fixedFluxPressure）
+    std::vector<Vec3>& bodyForce() { return bodyForce_; }
+    const std::vector<Vec3>& bodyForce() const { return bodyForce_; }
     // 湍流模型给出的显式动量源（单位质量，如 EARSM 的 −∇·τ_ex）；为空表示没有
     std::vector<Vec3>& turbSource() { return turbSource_; }
     const std::vector<Vec3>& turbSource() const { return turbSource_; }
@@ -126,6 +129,7 @@ private:
     std::vector<scalar> phi_, phiOld_, phiOldOld_;
     std::vector<scalar> nut_, wallNuEff_;
     std::vector<Vec3> turbSource_;
+    std::vector<Vec3> bodyForce_;
     std::vector<scalar> rAU_;
     std::vector<Tensor> gradU_;
     scalar pNormRef_ = 0;  // 压力方程监控残差的归一化下限（前 5 步归一化因子的最大值）

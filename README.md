@@ -146,7 +146,7 @@ cases/  meshes/    算例与网格
 3. ✅ LES：Smagorinsky（Van Driest 阻尼）、WALE、Vreman、σ、动态 Smagorinsky；统计量输出与 OpenLB 的 CSV 格式一致
 4. ✅ 壁面模型 WMLES：Spalding、Musker、Reichardt、对数律、幂律、一维薄层方程（可含压力梯度），可调采样高度；Re_τ=1000 槽道
 5. ✅ RANS：k-ε（标准 / RNG / realizable）、k-ω、k-ω SST、BSL-EARSM、LRR / SSG 雷诺应力模型、Spalart-Allmaras；标准壁面函数与全 y+ 壁面处理；周期山、圆柱绕流等
-6. 通用化：✅ 三维四面体网格验证；传热耦合、GPU
+6. 通用化：✅ 三维四面体网格验证；✅ 传热（能量方程、Boussinesq 浮力、热壁面函数、壁面热流 / Nu 输出）；GPU
 
 已知限制：TVD 类格式（MUSCL 等）在个别算例上会让 SIMPLE 残差停在 1e-4 左右（限制器反复切换），此时可改用 linearUpwind；
 瞬态大步长（扩散数远大于 1）时 PISO 可能不稳定，需要增大 `nOuter` 或限制步长。

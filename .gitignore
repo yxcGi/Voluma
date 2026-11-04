@@ -32,3 +32,6 @@ cases/*/output/
 *.log
 cases/*/log.txt
 cases/*/restart/
+cases/*/run/
+cases/*/run_*/
+__pycache__/

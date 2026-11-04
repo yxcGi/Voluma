@@ -115,9 +115,17 @@ if(Python3_Interpreter_FOUND)
   add_test(NAME case_cavity3D_diag_tet COMMAND ${FVM_CHECK} --case ${CMAKE_SOURCE_DIR}/cases/cavity3D/diag_tet.json
            --workdir ${CMAKE_BINARY_DIR}/cases/cavity3D_diag_tet ${FVM_MPI_ARGS}
            -- ${CMAKE_SOURCE_DIR}/tools/compare_cavity3d.py OUTPUT --check --tol 0.45)
+  # 传热：de Vahl Davis 方腔 Ra 1e4（Nu、u_max、v_max 对基准 < 3 %）、湍流槽道传热 k-ε 壁面函数（T+ 对 Kader 律 < 5 %）
+  add_test(NAME case_cavity_thermal_Ra4 COMMAND ${FVM_CHECK} --case ${CMAKE_SOURCE_DIR}/cases/naturalConvection/cavity_Ra4.json
+           --workdir ${CMAKE_BINARY_DIR}/cases/cavity_thermal_Ra4 ${FVM_MPI_ARGS}
+           -- ${CMAKE_SOURCE_DIR}/tools/compare_cavity_thermal.py OUTPUT --ra 1e4 --check --tol 3)
+  add_test(NAME case_channelHeat_kEpsilon COMMAND ${FVM_CHECK} --case ${CMAKE_SOURCE_DIR}/cases/channelHeat/kEpsilon_wf.json
+           --workdir ${CMAKE_BINARY_DIR}/cases/channelHeat_kEpsilon ${FVM_MPI_ARGS}
+           -- ${CMAKE_SOURCE_DIR}/tools/compare_channel_heat.py OUTPUT --log ${CMAKE_BINARY_DIR}/cases/channelHeat_kEpsilon/log.txt --check --tol 5 --tolNu 25)
   set_tests_properties(case_pipe_laminar case_cylinder_re40 case_tgv3d_32 case_tgv3d_32_dynSmag case_bc_parabolic case_bc_profile
                        case_bc_fixedFluxPressure case_bc_flowRate case_bc_totalPressure case_bc_timeTable
                        case_bc_turbulentInlet case_bc_rotatingWall case_bc_advective case_bc_inletOutlet_backflow
                        case_tet_pipe case_tet_squareDuct case_cavity3D_diag_hex case_cavity3D_diag_tet
+                       case_cavity_thermal_Ra4 case_channelHeat_kEpsilon
                        PROPERTIES LABELS "case" TIMEOUT 1200)
 endif()

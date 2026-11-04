@@ -1,0 +1,103 @@
+// 湍流槽道传热（壁面函数网格）：{'model': 'kEpsilon', 'wallTreatment': 'enhanced'}，热壁面函数 kader；其余同 sst_lowRe.json
+{
+  "mesh": {
+    "box": {
+      "n": [
+        4,
+        48,
+        1
+      ],
+      "hi": [
+        1,
+        2,
+        0.1
+      ],
+      "periodic": [
+        true,
+        false,
+        false
+      ],
+      "twoD": true,
+      "walls": [
+        "yMin",
+        "yMax"
+      ]
+    }
+  },
+  "physics": {
+    "nu": 0.00014545454545,
+    "steady": true
+  },
+  "forcing": {
+    "type": "meanVelocity",
+    "Ubar": [
+      1,
+      0,
+      0
+    ]
+  },
+  "turbulence": {
+    "model": "kEpsilon",
+    "wallTreatment": "enhanced"
+  },
+  "energy": {
+    "Pr": 0.71,
+    "Prt": 0.85,
+    "source": 1.0,
+    "nusselt": {
+      "L": 4.0,
+      "deltaT": 1.0
+    },
+    "wallFunction": "kader"
+  },
+  "boundary": {
+    "yMin": {
+      "T": {
+        "type": "fixedValue",
+        "value": 0.0
+      }
+    },
+    "yMax": {
+      "T": {
+        "type": "fixedValue",
+        "value": 0.0
+      }
+    }
+  },
+  "initial": {
+    "U": [
+      1,
+      0,
+      0
+    ],
+    "k": 0.005,
+    "omega": 50,
+    "T": 0.0,
+    "epsilon": 0.05
+  },
+  "schemes": {
+    "div": "linearUpwind"
+  },
+  "run": {
+    "maxIter": 8000,
+    "residualTol": 1e-08,
+    "printInterval": 1000,
+    "vtk": false
+  },
+  "lines": [
+    {
+      "name": "profile",
+      "start": [
+        0.5,
+        0,
+        0.05
+      ],
+      "end": [
+        0.5,
+        1,
+        0.05
+      ],
+      "n": 200
+    }
+  ]
+}
