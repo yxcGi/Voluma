@@ -79,7 +79,9 @@ template <class T> FvMatrix<T> div(const std::vector<scalar>& F, VolField<T>& ps
     const auto& own = m.owner();
     const auto& nei = m.neighbour();
     std::vector<typename Traits<T>::Grad> g;
-    if (s.needsGradient()) g = fvc::grad(psi);
+    // 偏斜网格上 linear / LUST 的线性部分加显式偏斜修正 (x_f − x'_f)·∇ψ_f（延迟修正），否则面值有一阶误差
+    const bool skewLin = m.skewed() && (s.type == Ty::Linear || s.type == Ty::LUST);
+    if (s.needsGradient() || skewLin) g = fvc::grad(psi);
 
     auto& lo = M.lower();
     auto& up = M.upper();
@@ -111,6 +113,12 @@ template <class T> FvMatrix<T> div(const std::vector<scalar>& F, VolField<T>& ps
             else
                 corr = gradDot(m.Cf()[f] - (m.C()[own[f]] + m.d()[f]), g[nei[f]]);
             const T c = (fac * Ff) * corr;
+            M.source()[own[f]] -= c;
+            M.source()[nei[f]] += c;
+        }
+        if (skewLin) {
+            const scalar fac = s.type == Ty::LUST ? 0.75 : 1.0;
+            const T c = (fac * Ff) * gradDot(m.skewVecs()[f], m.w()[f] * g[own[f]] + (1.0 - m.w()[f]) * g[nei[f]]);
             M.source()[own[f]] -= c;
             M.source()[nei[f]] += c;
         }

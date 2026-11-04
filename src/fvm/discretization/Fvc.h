@@ -30,7 +30,38 @@ template <class T> std::vector<T> interpolate(const Mesh& m, const std::vector<T
     return F;
 }
 
-// 体积通量 φ_f = U_f · S_f
+// 偏斜修正的面插值：φ_f = w φ_P + (1−w) φ_N + (x_f − x'_f)·∇φ_f（∇φ_f 为单元梯度的线性插值）。
+// 偏斜网格（四面体、三角形）上线性插值点 x'_f 不在面心，不修正时面值有一阶误差；无偏斜网格原样返回。
+template <class T>
+std::vector<T> interpolate(const Mesh& m, const std::vector<T>& c, const std::vector<typename Traits<T>::Grad>& g) {
+    auto F = interpolate(m, c);
+    if (!m.skewed()) return F;
+    const auto& w = m.w();
+    const auto& sk = m.skewVecs();
+    for (label i = 0; i < m.nInternalFaces(); ++i)
+        F[i] += gradDot(sk[i], w[i] * g[m.owner()[i]] + (1.0 - w[i]) * g[m.neighbour()[i]]);
+    return F;
+}
+template <class T>
+std::vector<T> interpolate(const VolField<T>& f, const std::vector<typename Traits<T>::Grad>& g) {
+    auto F = interpolate(f);
+    const Mesh& m = f.mesh();
+    if (!m.skewed()) return F;
+    const auto& w = m.w();
+    const auto& sk = m.skewVecs();
+    for (label i = 0; i < m.nInternalFaces(); ++i)
+        F[i] += gradDot(sk[i], w[i] * g[m.owner()[i]] + (1.0 - w[i]) * g[m.neighbour()[i]]);
+    return F;
+}
+
+// 体积通量 φ_f = U_f · S_f（给出 ∇U 时面速度带偏斜修正）
+inline std::vector<scalar> flux(const VolField<Vec3>& U, const std::vector<Tensor>& gradU) {
+    const Mesh& m = U.mesh();
+    auto Uf = interpolate(U, gradU);
+    std::vector<scalar> phi(m.nFaces());
+    for (label f = 0; f < m.nFaces(); ++f) phi[f] = dot(Uf[f], m.Sf()[f]);
+    return phi;
+}
 inline std::vector<scalar> flux(const VolField<Vec3>& U) {
     const Mesh& m = U.mesh();
     auto Uf = interpolate(U);
@@ -56,13 +87,89 @@ inline Tensor inv(const Tensor& a) {
     r.zz = (a.xx * a.yy - a.xy * a.yx) / det;
     return r;
 }
+inline scalar cmptMulT(scalar a, scalar b) { return a * b; }
+inline Vec3 cmptMulT(const Vec3& a, const Vec3& b) { return cmptMultiply(a, b); }
 inline Vec3 lsApply(const Tensor& G, const Vec3& d, scalar dphi) { return dot(G, d) * dphi; }
 inline Tensor lsApply(const Tensor& G, const Vec3& d, const Vec3& dphi) { return outer(dot(G, d), dphi); }
+
+// 加权最小二乘梯度核心：f 为单元值（含幽灵，已交换），de / dphi 为各边界面的约束向量与对应差值
+// （定值面：d 与 φ_b − φ_P；梯度面：n (n·d) 与 g_b (n·d)），权重 1/|d|²。结果未做二维置零与幽灵交换。
+template <class T>
+std::vector<typename Traits<T>::Grad> leastSquaresGrad(const Mesh& m, const T* f, const std::vector<Vec3>& de,
+                                                       const std::vector<T>& dphi) {
+    using G = typename Traits<T>::Grad;
+    const label nI = m.nInternalFaces(), nC = m.nCells();
+    const auto& own = m.owner();
+    const auto& nei = m.neighbour();
+    std::vector<G> g(m.nTotalCells(), G{});
+    std::vector<Tensor> dd(m.nTotalCells(), Tensor{});
+    for (label i = 0; i < m.nFaces(); ++i) {
+        const Vec3& d = i < nI ? m.d()[i] : de[i - nI];
+        const Tensor t = outer(d, d) * (1.0 / magSqr(d));
+        dd[own[i]] += t;
+        if (i < nI) dd[nei[i]] += t;
+    }
+    std::vector<Tensor> Gi(nC);
+    for (label c = 0; c < nC; ++c) {
+        Tensor a = dd[c];
+        if (m.twoD()) a(m.emptyDir(), m.emptyDir()) += 1.0;
+        Gi[c] = inv(a);
+    }
+    for (label i = 0; i < nI; ++i) {
+        const Vec3& d = m.d()[i];
+        const scalar wgt = 1.0 / magSqr(d);
+        const T dp = f[nei[i]] - f[own[i]];
+        if (own[i] < nC) g[own[i]] += lsApply(Gi[own[i]], d * wgt, dp);
+        if (nei[i] < nC) g[nei[i]] += lsApply(Gi[nei[i]], d * wgt, dp);
+    }
+    for (label i = nI; i < m.nFaces(); ++i) {
+        const Vec3& d = de[i - nI];
+        g[own[i]] += lsApply(Gi[own[i]], d * (1.0 / magSqr(d)), dphi[i - nI]);
+    }
+    return g;
+}
+// 二维 empty 方向分量置零 + 幽灵交换
+template <class G> void finishGrad(const Mesh& m, std::vector<G>& g) {
+    if (m.twoD()) {
+        const int e = m.emptyDir();
+        for (label c = 0; c < m.nCells(); ++c) {
+            if constexpr (std::is_same_v<G, Vec3>) {
+                g[c][e] = 0;
+            } else {
+                for (int j = 0; j < 3; ++j) g[c](e, j) = 0;
+            }
+        }
+    }
+    m.halo().exchange(g);
+}
 } // namespace detail
 
-// 梯度：Gauss 线性 或 加权最小二乘。结果含幽灵单元（已交换）。
+// 单元数组的最小二乘梯度（无边界条件对象）：bFixesValue[bf] 为真的边界面用面值 bValue[bf]，否则按零法向梯度约束
 template <class T>
-std::vector<typename Traits<T>::Grad> grad(const VolField<T>& f, GradScheme scheme = GradScheme::GaussLinear) {
+std::vector<typename Traits<T>::Grad> gradLS(const Mesh& m, const std::vector<T>& c, const std::vector<char>& bFixesValue,
+                                             const std::vector<T>& bValue) {
+    const label nI = m.nInternalFaces();
+    std::vector<Vec3> de(m.nFaces() - nI);
+    std::vector<T> dphi(m.nFaces() - nI, Traits<T>::zero());
+    for (label i = nI; i < m.nFaces(); ++i) {
+        const label bf = i - nI;
+        const Vec3& d = m.d()[i];
+        if (bFixesValue[bf]) {
+            de[bf] = d;
+            dphi[bf] = bValue[bf] - c[m.owner()[i]];
+        } else {
+            const Vec3 n = m.Sf()[i] * (1.0 / m.magSf()[i]);
+            de[bf] = n * std::max(dot(n, d), 0.05 * mag(d));
+        }
+    }
+    auto g = detail::leastSquaresGrad(m, c.data(), de, dphi);
+    detail::finishGrad(m, g);
+    return g;
+}
+
+// 梯度：Gauss 线性 或 加权最小二乘。结果含幽灵单元（已交换）。不指定格式时用网格的默认格式（Mesh::gradScheme）。
+template <class T>
+std::vector<typename Traits<T>::Grad> grad(const VolField<T>& f, GradScheme scheme) {
     using G = typename Traits<T>::Grad;
     const Mesh& m = f.mesh();
     const label nI = m.nInternalFaces(), nC = m.nCells();
@@ -80,45 +187,33 @@ std::vector<typename Traits<T>::Grad> grad(const VolField<T>& f, GradScheme sche
         for (label i = nI; i < m.nFaces(); ++i) g[own[i]] += outerSf(m.Sf()[i], f.bValue(i));
         for (label c = 0; c < nC; ++c) g[c] = g[c] * (1.0 / m.V()[c]);
     } else {
-        // 加权最小二乘：Σ w d⊗d，权重 1/|d|²
-        std::vector<Tensor> dd(m.nTotalCells(), Tensor{});
-        for (label i = 0; i < m.nFaces(); ++i) {
-            const Vec3& d = m.d()[i];
-            const Tensor t = outer(d, d) * (1.0 / magSqr(d));
-            dd[own[i]] += t;
-            if (i < nI) dd[nei[i]] += t;
-        }
-        std::vector<Tensor> Gi(nC);
-        for (label c = 0; c < nC; ++c) {
-            Tensor a = dd[c];
-            if (m.twoD()) a(m.emptyDir(), m.emptyDir()) += 1.0;
-            Gi[c] = detail::inv(a);
-        }
-        for (label i = 0; i < nI; ++i) {
-            const Vec3& d = m.d()[i];
-            const scalar wgt = 1.0 / magSqr(d);
-            const T dphi = f[nei[i]] - f[own[i]];
-            if (own[i] < nC) g[own[i]] += detail::lsApply(Gi[own[i]], d * wgt, dphi);
-            if (nei[i] < nC) g[nei[i]] += detail::lsApply(Gi[nei[i]], d * wgt, dphi);
-        }
-        for (label i = nI; i < m.nFaces(); ++i) {
-            const Vec3& d = m.d()[i];
-            const T dphi = f.bValue(i) - f[own[i]];
-            g[own[i]] += detail::lsApply(Gi[own[i]], d * (1.0 / magSqr(d)), dphi);
-        }
-    }
-    if (m.twoD()) {
-        // 二维：empty 方向的梯度分量置零
-        const int e = m.emptyDir();
-        for (label c = 0; c < nC; ++c) {
-            if constexpr (std::is_same_v<T, scalar>) {
-                g[c][e] = 0;
-            } else {
-                for (int j = 0; j < 3; ++j) g[c](e, j) = 0;
+        // 加权最小二乘：Σ w d⊗d，权重 1/|d|²。
+        // 边界面：定值类条件用面心值与 d（φ_b − φ_P = ∇φ·d）；梯度类/混合类条件（面值由单元值外推，不是面心处的真实值）
+        // 改用法向导数约束 ∇φ·n = g_b，写成 ∇φ·(n (n·d)) = g_b (n·d)。否则偏斜面（d 有切向分量）上
+        // zeroGradient 会错误地约束沿 d 的差分为零，使壁面单元梯度有不随加密减小的误差（四面体网格尤甚）。
+        std::vector<Vec3> de(m.nFaces() - nI);
+        std::vector<T> dphi(m.nFaces() - nI);
+        for (label p = 0; p < label(m.patches().size()); ++p) {
+            const Patch& pt = m.patches()[p];
+            const auto& bc = f.bc(p);
+            const bool value = bc.fixesValue();
+            for (label k = 0; k < pt.size; ++k) {
+                const label i = pt.start + k, bf = i - nI;
+                const Vec3& d = m.d()[i];
+                if (value) {
+                    de[bf] = d;
+                    dphi[bf] = f.bValue(i) - f[own[i]];
+                } else {
+                    const Vec3 n = m.Sf()[i] * (1.0 / m.magSf()[i]);
+                    const scalar nd = std::max(dot(n, d), 0.05 * mag(d));
+                    de[bf] = n * nd;
+                    dphi[bf] = (detail::cmptMulT(bc.gradientInternalCoeff(f, k), f[own[i]]) + bc.gradientBoundaryCoeff(f, k)) * nd;
+                }
             }
         }
+        g = detail::leastSquaresGrad(m, f.internal().data(), de, dphi);
     }
-    m.halo().exchange(g);
+    detail::finishGrad(m, g);
     return g;
 }
 
@@ -146,6 +241,10 @@ template <class T> std::vector<T> surfaceIntegrate(const Mesh& m, const std::vec
     for (label i = nI; i < m.nFaces(); ++i) r[m.owner()[i]] += F[i];
     for (label c = 0; c < m.nCells(); ++c) r[c] = r[c] * (1.0 / m.V()[c]);
     return r;
+}
+
+template <class T> std::vector<typename Traits<T>::Grad> grad(const VolField<T>& f) {
+    return grad(f, f.mesh().gradScheme());
 }
 
 // 面法向梯度（内部面含非正交修正）

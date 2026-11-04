@@ -1,0 +1,19 @@
+// 四面体网格方形直管层流（Re_Dh = U_b Dh/ν = 20，Dh = a = 1）：流量入口（均匀入流）经约 0.06 Re Dh ≈ 1.2 的发展段
+//   成为充分发展剖面，与 Shah & London 级数解对比（u_max/U_b = 2.0962，f Re = 14.227，见 tools/compare_duct.py）。
+//   网格：Gmsh 非结构四面体（mesh.py，约 2.3 万单元，最大非正交约 54°）。
+//   结果（docs/validation.md）：出口附近截面中线/对角线最大误差 2.1%（细网格 7.3 万单元 1.2%），进出口通量 ∓1 精确。
+{
+  "mesh": { "file": "duct_tet.msh" },
+  "physics": { "nu": 0.05, "steady": true },
+  "boundary": {
+    "inlet":  { "U": { "type": "flowRateInlet", "volumetricFlowRate": 1.0 }, "p": { "type": "zeroGradient" } },
+    "outlet": { "U": { "type": "inletOutlet", "inletValue": [0, 0, 0] }, "p": { "type": "fixedValue", "value": 0 } }
+  },
+  "initial": { "U": [0, 0, 1] },
+  "schemes": { "div": "linearUpwind", "grad": "leastSquares" },
+  "solution": { "nNonOrthCorr": 1 },
+  "run": { "maxIter": 3000, "residualTol": 1e-7, "printInterval": 100, "vtk": false, "printFluxes": true },
+  "lines": [ { "name": "y", "start": [0.5, 0, 2.9], "end": [0.5, 1, 2.9], "n": 101 },
+             { "name": "diag", "start": [0, 0, 2.9], "end": [1, 1, 2.9], "n": 101 },
+             { "name": "axis", "start": [0.5, 0.5, 0.02], "end": [0.5, 0.5, 2.98], "n": 100 } ]
+}

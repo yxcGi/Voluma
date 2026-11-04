@@ -1,0 +1,15 @@
+// 斜向顶盖三维方腔 Re = 1000，六面体 33³ 贴壁加密（回归测试用，约 25 s；精细版见 diag_hex.json）。
+//   竖直中线 (0.5, y, 0.5) 的 v_x(=v_z)、v_y、p 与文献表格比较：tools/compare_cavity3d.py output
+//   结果（docs/validation.md）：对 Feldman & Gelfgat 2010 中线数据 v_x、v_y、p 的最大偏差见 ctest 容差。
+{
+  "mesh": { "box": { "n": [33, 33, 33], "hi": [1, 1, 1],
+                     "walls": ["xMin", "xMax", "yMin", "yMax", "zMin", "zMax"], "names": {"yMax": "movingWall"},
+                     "stretch": { "x": 1.5, "y": 1.5, "z": 1.5 } } },
+  "physics": { "nu": 0.001, "steady": true },
+  "boundary": { "movingWall": { "U": {"type": "fixedValue", "value": [0.7071067812, 0, 0.7071067812]} } },
+  "schemes": { "div": "linearUpwind" },
+  "solution": { "alphaU": 0.7, "alphaP": 0.3 },
+  "run": { "maxIter": 5000, "residualTol": 1e-6, "output": "output", "printInterval": 250, "vtk": false },
+  "lines": [ { "name": "vert", "start": [0.5, 0, 0.5], "end": [0.5, 1, 0.5], "n": 201, "interpolate": true },
+             { "name": "horiz", "start": [0, 0.5, 0.5], "end": [1, 0.5, 0.5], "n": 201, "interpolate": true } ]
+}

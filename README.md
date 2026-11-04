@@ -10,7 +10,7 @@
 - **边界条件**：定值（常数 / 时间表 / 剖面表 / 抛物线，可缓启动、加扰动）、流量入口、平动与旋转壁、零梯度 / 定梯度 / fixedFluxPressure、Robin、对称；
   进出口：防回流 inletOutlet、总压入口 + pressureInletOutletVelocity、自由来流、对流出流 advective；湍流入口按强度 + 长度尺度 / 粘性比给定（Fluent 式）；
 - **网格**：OpenFOAM polyMesh（任意多面体，含 cyclic、empty），内置带加密的长方体网格生成；
-- **离散**：Euler / 二阶 backward（变步长）；upwind、linear、linearUpwind、LUST、TVD（vanLeer、MUSCL、minmod、limitedLinear）；Gauss / 最小二乘梯度；非正交修正；
+- **离散**：Euler / 二阶 backward（变步长）；upwind、linear、linearUpwind、LUST、TVD（vanLeer、MUSCL、minmod、limitedLinear）；Gauss / 最小二乘梯度；非正交修正；偏斜网格（三角形 / 四面体）面插值自动偏斜修正、梯度默认最小二乘；
 - **线性求解器**：PCG、PBiCGStab、Gauss-Seidel、Jacobi；预条件 GAMG（代数多重网格）、DIC/DILU、对角；
 - **并行**：MPI 区域分解（RCB），可选"可复现模式"使任意进程数结果逐位相同；
 - **输入输出**：JSON 算例文件；VTK（ParaView）与 Tecplot；探针、沿线采样；与进程数无关的续算文件。
@@ -84,6 +84,9 @@ mpirun -np 8 ./build/bin/fvmFlow cases/pitzDaily/case.json
 | `cases/taylorCouette` | fvmFlow | Taylor-Couette 流（旋转壁，Gmsh 四边形环），与解析解对比 |
 | `cases/advectiveOutlet` | fvmScalar | 高斯脉冲流出对流出流边界，与一维对流扩散解析解对比 |
 | `cases/jetBox` | fvmFlow | 箱内射流（Gmsh 三角形），出口持续回流下 inletOutlet 的稳健性 |
+| `cases/pipeTet` | fvmFlow | 四面体网格直圆管层流（Gmsh），剖面与压降对 Hagen-Poiseuille |
+| `cases/squareDuct` | fvmFlow | 四面体网格方形直管层流（Gmsh），对 Shah & London 级数解与 f Re = 14.227 |
+| `cases/cavity3D/diag_*.json` | fvmFlow | 斜向顶盖三维方腔 Re 1000（六面体加密 / Gmsh 四面体），中线数据对 Feldman & Gelfgat 2010 |
 
 网格在 `meshes/`。
 

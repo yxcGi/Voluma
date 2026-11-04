@@ -97,8 +97,24 @@ if(Python3_Interpreter_FOUND)
   add_test(NAME case_bc_inletOutlet_backflow COMMAND ${FVM_CHECK} --case ${CMAKE_SOURCE_DIR}/cases/jetBox/case.json
            --workdir ${CMAKE_BINARY_DIR}/cases/bc_jetBox ${FVM_MPI_ARGS}
            -- ${CMAKE_SOURCE_DIR}/tools/check_fluxes.py OUTPUT --expect-backflow outlet)
+  # 三维四面体网格算例（cases/pipeTet、cases/squareDuct，Gmsh 四面体，见 docs/validation.md）
+  add_test(NAME case_tet_pipe COMMAND ${FVM_CHECK} --case ${CMAKE_SOURCE_DIR}/cases/pipeTet/case.json
+           --workdir ${CMAKE_BINARY_DIR}/cases/pipeTet ${FVM_MPI_ARGS}
+           -- ${CMAKE_SOURCE_DIR}/tools/compare_pipe.py OUTPUT --axis 2 --tol 1.5 --nu 0.05 --dpdx-tol 4)
+  add_test(NAME case_tet_squareDuct COMMAND ${FVM_CHECK} --case ${CMAKE_SOURCE_DIR}/cases/squareDuct/case.json
+           --workdir ${CMAKE_BINARY_DIR}/cases/squareDuct ${FVM_MPI_ARGS}
+           -- ${CMAKE_SOURCE_DIR}/tools/compare_duct.py OUTPUT --tol 0.02 --check --nu 0.05 --dpdx-tol 4)
+  # 斜向顶盖三维方腔 Re 1000（Feldman & Gelfgat 2010 中线数据）：六面体 33³ 贴壁加密与 6 万四面体均为粗网格回归，
+  # 容差按各自粗网格偏差上限设置；精细网格结果见 docs/validation.md 六
+  add_test(NAME case_cavity3D_diag_hex COMMAND ${FVM_CHECK} --case ${CMAKE_SOURCE_DIR}/cases/cavity3D/diag_hex33.json
+           --workdir ${CMAKE_BINARY_DIR}/cases/cavity3D_diag_hex ${FVM_MPI_ARGS}
+           -- ${CMAKE_SOURCE_DIR}/tools/compare_cavity3d.py OUTPUT --check --tol 0.25)
+  add_test(NAME case_cavity3D_diag_tet COMMAND ${FVM_CHECK} --case ${CMAKE_SOURCE_DIR}/cases/cavity3D/diag_tet.json
+           --workdir ${CMAKE_BINARY_DIR}/cases/cavity3D_diag_tet ${FVM_MPI_ARGS}
+           -- ${CMAKE_SOURCE_DIR}/tools/compare_cavity3d.py OUTPUT --check --tol 0.45)
   set_tests_properties(case_pipe_laminar case_cylinder_re40 case_tgv3d_32 case_bc_parabolic case_bc_profile
                        case_bc_fixedFluxPressure case_bc_flowRate case_bc_totalPressure case_bc_timeTable
                        case_bc_turbulentInlet case_bc_rotatingWall case_bc_advective case_bc_inletOutlet_backflow
+                       case_tet_pipe case_tet_squareDuct case_cavity3D_diag_hex case_cavity3D_diag_tet
                        PROPERTIES LABELS "case" TIMEOUT 1200)
 endif()

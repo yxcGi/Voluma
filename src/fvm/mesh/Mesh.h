@@ -15,6 +15,7 @@
 // 配合可复现归约，结果与进程数无关。
 
 #include "fvm/core/Types.h"
+#include "fvm/discretization/Schemes.h"
 #include "fvm/mesh/RawMesh.h"
 #include "fvm/parallel/Comm.h"
 
@@ -68,6 +69,18 @@ public:
     const std::vector<scalar>& deltaCoeffs() const { return dc_; }     // 1/|d|
     const std::vector<scalar>& nonOrthDeltaCoeffs() const { return ndc_; }  // 1/max(n·d, 0.05|d|)
     const std::vector<Vec3>& corrVecs() const { return corr_; }        // n − d·ndc（非正交修正向量）
+    // 面偏斜度 |x_f − x'_f|/|d|（x'_f 为 PN 连线上按法向距离分割的插值点）：全局平均 / 最大。
+    // Gauss 线性梯度在偏斜面上有不随加密减小的零阶误差（内插点不在面心），非结构三角形/四面体网格应用最小二乘梯度。
+    scalar meanSkewness() const;
+    scalar maxSkewness() const;
+    // 内部面偏斜向量 x_f − x'_f（边界面为 0）与"网格存在偏斜面"标志（全局一致）：
+    // 面插值的偏斜修正 φ_f = w φ_P + (1−w) φ_N + (x_f − x'_f)·∇φ_f 用它，无偏斜（六面体）网格时跳过
+    const std::vector<Vec3>& skewVecs() const { return skew_; }
+    bool skewed() const { return skewed_; }
+    // 默认梯度格式：fvc::grad(f) 不指定格式时使用；扩散项非正交修正、linearUpwind、湍流模型等都经由它，
+    // 由应用按算例 "schemes.grad" 设置（未指定时偏斜网格取最小二乘，见 fvmFlow）
+    GradScheme gradScheme() const { return gradScheme_; }
+    void setGradScheme(GradScheme s) { gradScheme_ = s; }
 
     const std::vector<Patch>& patches() const { return patches_; }
     label findPatch(const std::string& name) const;  // 不存在返回 -1
@@ -126,6 +139,10 @@ private:
     std::vector<int> solved_{0, 1, 2};
     scalar totalVolume_ = 0;
     std::vector<label> cfOff_, cfList_;
+    scalar skewSum_ = 0, skewMax_ = 0;  // 本进程内部面偏斜度之和 / 最大
+    std::vector<Vec3> skew_;
+    bool skewed_ = false;
+    GradScheme gradScheme_ = GradScheme::GaussLinear;
 };
 
 using MeshPtr = std::shared_ptr<Mesh>;

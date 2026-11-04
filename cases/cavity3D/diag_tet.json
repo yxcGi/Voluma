@@ -1,0 +1,13 @@
+// 斜向顶盖三维方腔 Re = 1000，Gmsh 四面体网格（mesh.py wall：壁面附近 1/32、核心 1/14，约 6 万单元）。
+//   同 diag_hex.json 的工况与文献对比；四面体上梯度默认最小二乘、面插值自动加偏斜修正（见 docs/validation.md 六）。
+//   粗四面体网格精度有限（与同间距六面体相当），精细结果见 docs/validation.md（36 万单元壁面加密网格）。
+{
+  "mesh": { "file": "cavity_tet_wall.msh" },
+  "physics": { "nu": 0.001, "steady": true },
+  "boundary": { "movingWall": { "U": {"type": "fixedValue", "value": [0.7071067812, 0, 0.7071067812]} } },
+  "schemes": { "div": "linearUpwind", "grad": "leastSquares" },
+  "solution": { "alphaU": 0.7, "alphaP": 0.3, "nNonOrthCorr": 1 },
+  "run": { "maxIter": 6000, "residualTol": 1e-6, "output": "output", "printInterval": 250, "vtk": false },
+  "lines": [ { "name": "vert", "start": [0.5, 0, 0.5], "end": [0.5, 1, 0.5], "n": 201, "interpolate": true },
+             { "name": "horiz", "start": [0, 0.5, 0.5], "end": [1, 0.5, 0.5], "n": 201, "interpolate": true } ]
+}

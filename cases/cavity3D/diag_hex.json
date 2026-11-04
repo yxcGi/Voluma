@@ -1,0 +1,17 @@
+// 斜向顶盖三维方腔 Re = 1000（Feldman & Gelfgat 2010 / Feldman 2013 基准）：顶盖 y = 1 以 U = 1 沿 (1,0,1)/√2 运动，
+//   ν = 0.001。内置六面体 65³、三向 tanh 贴壁加密（β = 1.5，壁面首层约 0.3 倍均匀间距）。
+//   竖直中线 (0.5, y, 0.5) 的 v_x(=v_z)、v_y、p 与文献表格比较：tools/compare_cavity3d.py output
+//   结果（docs/validation.md）：v_x 0.7%、v_y 3.4%、p 2.5%（以各量表中最大值归一；OpenFOAM 100³ 对同一基准为 0.4/1.4/1.0%）。
+//   约 4.5 分钟（2 进程）；回归测试用 diag_hex33.json，四面体网格用 diag_tet.json。
+{
+  "mesh": { "box": { "n": [65, 65, 65], "hi": [1, 1, 1],
+                     "walls": ["xMin", "xMax", "yMin", "yMax", "zMin", "zMax"], "names": {"yMax": "movingWall"},
+                     "stretch": { "x": 1.5, "y": 1.5, "z": 1.5 } } },
+  "physics": { "nu": 0.001, "steady": true },
+  "boundary": { "movingWall": { "U": {"type": "fixedValue", "value": [0.7071067812, 0, 0.7071067812]} } },
+  "schemes": { "div": "linearUpwind" },
+  "solution": { "alphaU": 0.7, "alphaP": 0.3 },
+  "run": { "maxIter": 5000, "residualTol": 1e-6, "output": "output", "printInterval": 250, "vtk": false },
+  "lines": [ { "name": "vert", "start": [0.5, 0, 0.5], "end": [0.5, 1, 0.5], "n": 201, "interpolate": true },
+             { "name": "horiz", "start": [0, 0.5, 0.5], "end": [1, 0.5, 0.5], "n": 201, "interpolate": true } ]
+}

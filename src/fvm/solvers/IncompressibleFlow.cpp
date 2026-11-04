@@ -33,7 +33,7 @@ void IncompressibleFlow::initialize() {
     p_.updateBCs(ts_.time);
     U_.correctBoundaryConditions();
     p_.correctBoundaryConditions();
-    phi_ = fvc::flux(U_);
+    phi_ = mesh_->skewed() ? fvc::flux(U_, fvc::grad(U_, gradScheme)) : fvc::flux(U_);
     rAU_.assign(mesh_->nTotalCells(), 0.0);
     initialized_ = true;
 }
@@ -229,11 +229,38 @@ StepInfo IncompressibleFlow::step(scalar dt) {
             const auto H = UEqn.H();
             std::vector<Vec3> HbyA(nT);
             for (label c = 0; c < nT; ++c) HbyA[c] = rAU_[c] * H[c];
-            const auto rAUf = fvc::interpolate(m, rAU_);
+            // rAU_f：偏斜网格上同样加偏斜修正（∇rAU 按零法向梯度边界的最小二乘），与 HbyA_f 的修正一致，
+            // 使线性压力场下 φ_f = U_f·S_f 精确成立（否则 G S_z (x_f − x'_f)·∇rAU 成为伪通量）
+            const auto rAUf = m.skewed() ? fvc::interpolate(m, rAU_, fvc::gradLS(m, rAU_, std::vector<char>(m.nBoundaryFaces(), 0), std::vector<scalar>(m.nBoundaryFaces(), 0.0)))
+                                         : fvc::interpolate(m, rAU_);
 
+            // 偏斜网格（四面体/三角形）：HbyA 面值加偏斜修正 (x_f − x'_f)·∇HbyA_f。线性插值点不在面心时
+            // 面速度有一阶误差，连续性方程会迫使单元速度偏离（四面体圆管壁面切应力偏高约 10%，见 docs/validation.md）。
+            // ∇HbyA 用最小二乘：定通量边界面取 U 的边界值，其余按零法向梯度（与 phiHbyA 的边界取法一致）
+            std::vector<Tensor> gH;
+            if (m.skewed()) {
+                // 定通量边界面上 HbyA 的面值取 U_b + rAU_P ∇p_P（HbyA = U + rAU∇p，壁面处并不为零），
+                // 这样最小二乘约束 HbyA_b − HbyA_P = U_b − U_P 与速度差一致
+                const auto gpc = fvc::grad(p_, gradScheme);
+                std::vector<char> bFix(m.nBoundaryFaces(), 0);
+                std::vector<Vec3> bVal(m.nBoundaryFaces(), Vec3{});
+                for (label p = 0; p < label(m.patches().size()); ++p) {
+                    const Patch& pt = m.patches()[p];
+                    const bool fixes = U_.bc(p).fixesFlux();
+                    for (label i = 0; i < pt.size; ++i) {
+                        const label f = pt.start + i, o = m.owner()[f];
+                        bFix[f - nI] = fixes;
+                        if (fixes) bVal[f - nI] = U_.bValue(f) + rAU_[o] * gpc[o];
+                    }
+                }
+                gH = fvc::gradLS(m, HbyA, bFix, bVal);
+            }
             std::vector<scalar> phiHbyA(m.nFaces());
             for (label f = 0; f < nI; ++f) {
-                const Vec3 Hf = m.w()[f] * HbyA[m.owner()[f]] + (1.0 - m.w()[f]) * HbyA[m.neighbour()[f]];
+                const label o = m.owner()[f], n = m.neighbour()[f];
+                const scalar wf = m.w()[f];
+                Vec3 Hf = wf * HbyA[o] + (1.0 - wf) * HbyA[n];
+                if (!gH.empty()) Hf += gradDot(m.skewVecs()[f], wf * gH[o] + (1.0 - wf) * gH[n]);
                 phiHbyA[f] = dot(Hf, m.Sf()[f]);
             }
             for (label p = 0; p < label(m.patches().size()); ++p) {

@@ -48,15 +48,15 @@ std::vector<double> Probes::values(const double* d, int nc) const {
     return v;
 }
 
-void Probes::writeTable(const std::string& file, const double* data, int nc, const std::string& name) const {
-    const auto v = values(data, nc);
+void Probes::writeTable(const std::string& file, const std::vector<double>& v, int nc, const std::string& name) const {
     if (!par::master()) return;
+    const auto& x = locations();
     std::ofstream os(file);
     os << "x,y,z";
     for (int c = 0; c < nc; ++c) os << ',' << name << (nc == 1 ? "" : std::string("_") + "xyz"[c]);
     os << '\n' << std::setprecision(10);
     for (std::size_t k = 0; k < points_.size(); ++k) {
-        os << centres_[k].x << ',' << centres_[k].y << ',' << centres_[k].z;
+        os << x[k].x << ',' << x[k].y << ',' << x[k].z;
         for (int c = 0; c < nc; ++c) os << ',' << v[k * nc + c];
         os << '\n';
     }

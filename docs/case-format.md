@@ -48,6 +48,8 @@ Fluent 按 zone 类型（wall / symmetry / 其余为 patch），都可以用 `pa
 金字塔、任意多面体（Fluent / polyMesh）及其混合；Gmsh 高阶单元只取角点。周期边界和非协调（悬挂节点）网格暂不支持导入。
 
 `meshCheck <网格> [--scale s] [--depth d] [--patch-type 名=类型] [--polymesh 目录] [--vtk 目录]` 可单独检查网格
+（输出单元数、体积、最大非正交角、平均 / 最大偏斜度、各 patch）。偏斜网格（三角形、四面体）上面插值自动加偏斜修正、
+梯度默认最小二乘，见 `docs/validation.md` 六
 （单元闭合性、面朝向、体积、非正交角、各边界面积）并转换成 polyMesh / VTK。
 
 ## physics
@@ -167,7 +169,7 @@ w = 0，p 为对应的解析压力）：`"initial": { "taylorGreen": { "U0": 1, 
 | --- | --- | --- |
 | `div` | `upwind` `linear` `linearUpwind` `LUST` `limitedLinear 1` `vanLeer` `MUSCL` `minmod` | 稳态 `linearUpwind`，瞬态 `linear` |
 | `ddt` | `Euler` `backward`（二阶，支持变步长） | `backward` |
-| `grad` | `Gauss` `leastSquares` | `Gauss` |
+| `grad` | `Gauss` `leastSquares` | `Gauss`；平均偏斜度 > 0.05 的网格（三角形 / 四面体）默认 `leastSquares` |
 | `laplacianNonOrthCorr` | 是否做显式非正交修正 | true |
 
 ## solution
@@ -232,7 +234,8 @@ epsilon_sgs = 2⟨ν_t S:S⟩，enstrophy = ½⟨|ω|²⟩。总耗散 −dk/dt 
 "lines":  [ { "name": "xMid", "start": [0.5, 0, 0], "end": [0.5, 1, 0], "n": 101 } ]  // 结束时沿线采样
 ```
 
-探针取所在单元（最近体心）的值，结果与进程数无关。
+探针取所在单元（最近体心）的值，结果与进程数无关。沿线采样默认也取单元值（表中坐标为单元体心）；
+加 `"interpolate": true` 则用单元梯度线性重构到采样点 φ_c + ∇φ_c·(x − x_c)，表中坐标为采样点本身，非结构网格上建议开启。
 
 ## forces（仅 fvmFlow）
 

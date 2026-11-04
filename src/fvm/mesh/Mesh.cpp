@@ -570,6 +570,7 @@ std::shared_ptr<Mesh> Mesh::build(const RawMesh* raw) {
         M.patches_[p].ordering.setup(M.patches_[p].size, M.patches_[p].globalSize,
                                      par::master() ? std::move(patchPos[p]) : std::vector<glabel>{});
     M.finishLocal();
+    M.skewed_ = par::allMax(M.skewMax_) > 1e-8;
     return mesh;
 }
 
@@ -580,6 +581,8 @@ void Mesh::finishLocal() {
     dc_.resize(nF);
     ndc_.resize(nF);
     corr_.resize(nF);
+    skew_.assign(nF, Vec3{});
+    skewSum_ = skewMax_ = 0;
     for (label f = 0; f < nF; ++f) {
         magSf_[f] = mag(Sf_[f]);
         const Vec3 n = Sf_[f] / magSf_[f];
@@ -589,6 +592,10 @@ void Mesh::finishLocal() {
             const scalar sOwn = std::abs(dot(Sf_[f], Cf_[f] - CP));
             const scalar sNei = std::abs(dot(Sf_[f], CP + dd - Cf_[f]));
             w_[f] = sNei / (sOwn + sNei);
+            skew_[f] = Cf_[f] - (CP + dd * (1.0 - w_[f]));
+            const scalar skew = mag(skew_[f]) / mag(dd);
+            skewSum_ += skew;
+            skewMax_ = std::max(skewMax_, skew);
         } else {
             w_[f] = 1.0;
         }
@@ -662,6 +669,14 @@ label Mesh::findPatch(const std::string& name) const {
     return -1;
 }
 
+scalar Mesh::meanSkewness() const {
+    double v[2] = {skewSum_, double(nInternalFaces_)};
+    par::allSumInPlace(v, 2);
+    return v[1] > 0 ? v[0] / v[1] : 0.0;
+}
+
+scalar Mesh::maxSkewness() const { return par::allMax(skewMax_); }
+
 bool Mesh::isEmptyPatch(const std::string& name) const {
     return std::find(emptyPatches_.begin(), emptyPatches_.end(), name) != emptyPatches_.end();
 }
@@ -677,7 +692,8 @@ void Mesh::printSummary() const {
     }
     maxNonOrth = par::allMax(maxNonOrth);
     std::cout << "Mesh: " << nGlobalCells_ << " cells, " << (twoD_ ? "2D" : "3D") << ", total volume "
-              << totalVolume_ << ", max non-orthogonality " << maxNonOrth << " deg\n";
+              << totalVolume_ << ", max non-orthogonality " << maxNonOrth << " deg, skewness mean "
+              << meanSkewness() << " max " << maxSkewness() << "\n";
     std::cout << "  patches:";
     for (const auto& p : patches_) std::cout << ' ' << p.name << '(' << toString(p.type) << ',' << p.globalSize << ')';
     for (const auto& e : emptyPatches_) std::cout << ' ' << e << "(empty)";

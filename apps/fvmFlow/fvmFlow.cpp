@@ -140,7 +140,14 @@ void runCase(const std::string& caseFile) {
     // 格式
     const Json& sch = cfg["schemes"];
     flow.divScheme = ConvectionScheme::parse(sch.get("div", steady ? "linearUpwind" : "linear"));
-    flow.gradScheme = parseGradScheme(sch.get("grad", "Gauss"));
+    // 梯度格式：未指定时，偏斜网格（三角形/四面体等非结构网格）默认最小二乘，否则 Gauss 线性；
+    // 设为网格默认格式后扩散项非正交修正、linearUpwind、湍流模型等都按它取梯度
+    const bool skewed = mesh->meanSkewness() > 0.05;
+    flow.gradScheme = parseGradScheme(sch.has("grad") ? sch["grad"].string() : (skewed ? "leastSquares" : "Gauss"));
+    mesh->setGradScheme(flow.gradScheme);
+    if (!sch.has("grad") && skewed)
+        std::cout << "grad scheme: leastSquares (default for skewed mesh, mean skewness " << mesh->meanSkewness()
+                  << ")\n";
     flow.ddtScheme = steady ? DdtScheme::Steady : parseDdtScheme(sch.get("ddt", "backward"));
     flow.laplacianNonOrthCorr = sch.get("laplacianNonOrthCorr", true);
 
@@ -371,6 +378,7 @@ void runCase(const std::string& caseFile) {
             std::vector<Vec3> pts;
             for (int k = 0; k < n; ++k) pts.push_back(a + (b - a) * (n > 1 ? scalar(k) / (n - 1) : 0.0));
             Probes line(mesh, pts, out);
+            if (l.get("interpolate", false)) line.setInterpolate(true);
             const std::string name = l.get("name", "line");
             line.writeTable(out + "/line_" + name + "_U.csv", flow.U());
             line.writeTable(out + "/line_" + name + "_p.csv", flow.p());
@@ -489,6 +497,19 @@ void runCase(const std::string& caseFile) {
     }
     if (turb) turb->printYPlus(std::cout);
     if (flow.forcing.mode == MomentumForcing::Mode::MeanVelocity) std::cout << "forcing gradP " << flow.forcing.gradP << '\n';
+    {
+        // 体平均速度（单元值）：与边界通量对照可检查单元速度与面通量的一致性（如管流 Q/A）
+        par::SumAcc sx, sy, sz;
+        for (label c = 0; c < mesh->nCells(); ++c) {
+            const Vec3 uv = flow.U()[c] * mesh->V()[c];
+            sx.add(uv.x);
+            sy.add(uv.y);
+            sz.add(uv.z);
+        }
+        const scalar vol = mesh->totalVolume();
+        std::cout << "mean U (volume average) " << sx.allReduce() / vol << ' ' << sy.allReduce() / vol << ' '
+                  << sz.allReduce() / vol << '\n';
+    }
     std::cout << "checksum U " << checksum(flow.U()) << " p " << checksum(flow.p()) << '\n';
     if (par::master()) cfg.reportUnused(std::cout);
 }

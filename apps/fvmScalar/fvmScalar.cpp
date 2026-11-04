@@ -38,6 +38,9 @@ void runCase(const std::string& caseFile) {
 
     const Json& sch = cfg["schemes"];
     st.divScheme = ConvectionScheme::parse(sch.get("div", "linearUpwind"));
+    // 梯度格式（扩散项非正交修正、linearUpwind 用）：未指定时偏斜网格默认最小二乘
+    mesh->setGradScheme(parseGradScheme(sch.has("grad") ? sch["grad"].string()
+                                                        : (mesh->meanSkewness() > 0.05 ? "leastSquares" : "Gauss")));
     st.ddtScheme = parseDdtScheme(sch.get("ddt", "backward"));
     st.laplacianNonOrthCorr = sch.get("laplacianNonOrthCorr", true);
     const Json& sol = cfg["solution"];
@@ -99,6 +102,7 @@ void runCase(const std::string& caseFile) {
             std::vector<Vec3> pts;
             for (int k = 0; k < np; ++k) pts.push_back(a + (b - a) * (np > 1 ? scalar(k) / (np - 1) : 0.0));
             Probes line(mesh, pts, out);
+            if (l.get("interpolate", false)) line.setInterpolate(true);
             line.writeTable(out + "/line_" + l.get("name", "line") + "_" + name + ".csv", st.T());
         }
     }

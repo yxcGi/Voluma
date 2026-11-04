@@ -1,0 +1,20 @@
+// 四面体网格直圆管层流（Re_D = U_b D/ν = 20）：入口给抛物线剖面、出口定压，沿管应保持 Hagen-Poiseuille 剖面
+//   u(r) = 2 U_b (1 − r²/R²)。网格：Gmsh 非结构四面体（mesh.py，约 2.6 万单元，最大非正交约 50°），
+//   检验四面体网格上的非正交修正、最小二乘梯度与曲面上的抛物线入口。
+//   结果（docs/validation.md）：中心线/径向线最大误差约 1.5%（细网格 7.5 万单元 1.2%），入口通量误差 0.4%（细网格 0.2%）。
+//   加 "writePolyMesh": "polyMesh" 可把读入的网格另存为 OpenFOAM polyMesh（tools/polymesh_to_fluent.py 可再转为 Fluent .msh）。
+{
+  "mesh": { "file": "pipe_tet.msh" },
+  "physics": { "nu": 0.05, "steady": true },
+  "boundary": {
+    "inlet":  { "U": { "type": "fixedValue", "parabolic": { "Ubulk": 1, "radius": 0.5 } }, "p": { "type": "zeroGradient" } },
+    "outlet": { "U": { "type": "inletOutlet", "inletValue": [0, 0, 0] }, "p": { "type": "fixedValue", "value": 0 } }
+  },
+  "initial": { "U": [0, 0, 1] },
+  "schemes": { "div": "linearUpwind", "grad": "leastSquares" },
+  "solution": { "nNonOrthCorr": 1 },
+  "run": { "maxIter": 3000, "residualTol": 1e-7, "printInterval": 100, "vtk": false, "printFluxes": true },
+  "lines": [ { "name": "x", "start": [-0.5, 0, 3.6], "end": [0.5, 0, 3.6], "n": 101 },
+             { "name": "diag", "start": [-0.3535533906, -0.3535533906, 3.6], "end": [0.3535533906, 0.3535533906, 3.6], "n": 101 },
+             { "name": "axis", "start": [0, 0, 0.02], "end": [0, 0, 3.98], "n": 100 } ]
+}
