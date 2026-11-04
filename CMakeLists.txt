@@ -65,6 +65,9 @@ if(Python3_Interpreter_FOUND)
   add_test(NAME case_tgv3d_32 COMMAND ${FVM_CHECK} --case ${CMAKE_SOURCE_DIR}/cases/tgv3d/case32.json
            --workdir ${CMAKE_BINARY_DIR}/cases/tgv3d ${FVM_MPI_ARGS}
            -- ${CMAKE_SOURCE_DIR}/tools/compare_tgv.py OUTPUT/monitor.csv --check 30)
+  add_test(NAME case_tgv3d_32_dynSmag COMMAND ${FVM_CHECK} --case ${CMAKE_SOURCE_DIR}/cases/tgv3d/case32_dynSmag.json
+           --workdir ${CMAKE_BINARY_DIR}/cases/tgv3d_dynSmag ${FVM_MPI_ARGS}
+           -- ${CMAKE_SOURCE_DIR}/tools/compare_tgv.py OUTPUT/monitor.csv --check 30)
   # 边界条件算例（cases/channelInlet 等，见 docs/validation.md）
   set(FVM_CHECK_SCALAR ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/check_case.py --exe $<TARGET_FILE:fvmScalar>)
   add_test(NAME case_bc_parabolic COMMAND ${FVM_CHECK} --case ${CMAKE_SOURCE_DIR}/cases/channelInlet/parabolic.json
@@ -112,7 +115,7 @@ if(Python3_Interpreter_FOUND)
   add_test(NAME case_cavity3D_diag_tet COMMAND ${FVM_CHECK} --case ${CMAKE_SOURCE_DIR}/cases/cavity3D/diag_tet.json
            --workdir ${CMAKE_BINARY_DIR}/cases/cavity3D_diag_tet ${FVM_MPI_ARGS}
            -- ${CMAKE_SOURCE_DIR}/tools/compare_cavity3d.py OUTPUT --check --tol 0.45)
-  set_tests_properties(case_pipe_laminar case_cylinder_re40 case_tgv3d_32 case_bc_parabolic case_bc_profile
+  set_tests_properties(case_pipe_laminar case_cylinder_re40 case_tgv3d_32 case_tgv3d_32_dynSmag case_bc_parabolic case_bc_profile
                        case_bc_fixedFluxPressure case_bc_flowRate case_bc_totalPressure case_bc_timeTable
                        case_bc_turbulentInlet case_bc_rotatingWall case_bc_advective case_bc_inletOutlet_backflow
                        case_tet_pipe case_tet_squareDuct case_cavity3D_diag_hex case_cavity3D_diag_tet

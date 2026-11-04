@@ -2,12 +2,13 @@
 // 湍流模型（不可压，运动学量）。所有模型给 IncompressibleFlow 提供单元 ν_t 以及壁面面上的 ν_eff，
 // 在每个外迭代开始前（使用最新的 U、φ）更新一次；输运方程的旧时间层每个时间步保存一次。
 //
-//   LES   Smagorinsky（可选 Van Driest 阻尼）、WALE；可选壁面模型（WMLES）：
-//         spalding / musker / powerLaw（Werner-Wengle）/ logLaw，采样高度可设，给出壁面切应力
-//   RANS  kEpsilon（标准）、realizableKE（Shih）、kOmega（Wilcox 1998）、kOmegaSST（Menter 2003）、
-//         SpalartAllmaras（无 ft2）
-//         壁函数：nutkWallFunction（ν_t 壁面值）、epsilon/omega 壁面单元值（omega 为粘性/对数层混合），
-//         近壁产生项 G 按对数律修正；wallFunctions=false 时为低 Re 处理（壁面 ν_t = 0）
+//   LES   Smagorinsky（可选 Van Driest 阻尼）、WALE、Vreman、sigma、dynamicSmagorinsky（Germano-Lilly）；
+//         可选壁面模型（WMLES）：spalding / musker / reichardt / powerLaw（Werner-Wengle）/ logLaw /
+//         ode（一维薄层方程数值解，可含切向压力梯度 = 非平衡壁面模型），采样高度可设，给出壁面切应力
+//   RANS  kEpsilon（标准）、RNGkEpsilon、realizableKE（Shih）、kOmega（Wilcox 1998）、kOmegaSST（Menter 2003）、
+//         BSLEARSM、SpalartAllmaras（无 ft2）
+//         壁面处理 wallTreatment：standard（nutkWallFunction + y+ 切换）或 enhanced（全 y+：Spalding 律壁面切应力、
+//         Kader 混合的壁面单元产生项、Wolfshtein 两层 ε）；wallFunctions=false 时为低 Re 处理（壁面 ν_t = 0）
 //
 // 系数与 OpenFOAM 同名模型默认值一致，可在 JSON 的 "coeffs" 中覆盖。
 
@@ -39,7 +40,7 @@ public:
     const std::vector<scalar>& nut() const { return flow_.nut(); }
     // 各壁面面的 y+（与壁面单元中心，最近一次 correct）
     std::vector<scalar> yPlusWall() const;
-    // 打印壁面 y+ 统计
+    // 打印壁面 y+ 统计（以及 ν_t 限制器作用的单元数）
     void printYPlus(std::ostream& os) const;
     // 续算：模型场及旧时间层（与 restart::write/read 同目录）
     void writeRestart(const std::string& dir);
@@ -86,6 +87,9 @@ protected:
     ConvectionScheme divScheme_;
     int lastTimeIndex_ = -1;
     std::map<std::string, scalar> coeffs_;
+    // ν_t/ν 上限（Fluent 的 turbulent viscosity ratio limit，默认 1e5）：防止 ε/ω → 0 时 ν_t 溢出；nLimited_ 为被限制的单元数
+    scalar nutMaxRatio_ = 1e5;
+    label nLimited_ = 0;
 
     // 近壁常数
     scalar kappa_ = 0.41, E_ = 9.8, Cmu_ = 0.09;

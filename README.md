@@ -77,7 +77,7 @@ mpirun -np 8 ./build/bin/fvmFlow cases/pitzDaily/case.json
 | `cases/pipe` | fvmFlow | 周期直圆管层流（内置蝶形 O 型网格），与 Hagen-Poiseuille 解析解对比 |
 | `cases/cylinderRe40` `cases/cylinderRe100` | fvmFlow | 二维圆柱绕流（内置 O 型网格）：Re 40 定常回流区、Re 100 卡门涡街，与文献 Cd、St 对比 |
 | `cases/tgv3d` | fvmFlow | 三维 Taylor-Green 涡 Re 1600，与 512³ DNS 的耗散曲线对比（LES 核心验证） |
-| `cases/channel395` `cases/channelWMLES` | fvmFlow | 槽道 RANS（Re_τ 392）与壁模型 LES（Re_τ 1000），与 DNS 对比 |
+| `cases/channel395` `cases/channelWMLES` | fvmFlow | 槽道 RANS（Re_τ 392）与壁模型 LES（Re_τ 1000），与 DNS 对比；`tools/channel_yplus_sweep.py` 做各模型 / 壁面处理的 y+ 扫描 |
 | `cases/naca0012` | fvmFlow | NACA0012 Re 1000 二维瞬态，Cd、Cl 与文献对比 |
 | `cases/periodicHillRANS` `cases/periodicHill` | fvmFlow | 周期山 Re_b 10595：二维 k-ω SST（定性）与三维壁模型 LES（需大算力） |
 | `cases/channelInlet` | fvmFlow | 槽道进出口边界条件验证：抛物线 / 剖面表 / 流量 / 总压 / 时间表入口、inletOutlet 出口、湍流入口（Poiseuille、Bernoulli 解析解） |
@@ -143,10 +143,10 @@ cases/  meshes/    算例与网格
 
 1. ✅ 基础平台：瞬态、周期、体力、GAMG、算例文件、VTK / Tecplot / 探针 / 续算
 2. NACA0012 Re=1000 等二维层流外流，与 OpenLB 对比
-3. LES：Smagorinsky（Van Driest 阻尼）、WALE；统计量输出与 OpenLB 的 CSV 格式一致
-4. 壁面模型 WMLES：幂律、Spalding、Musker，可调采样高度；Re_τ=1000 槽道
-5. RANS：k-ω SST、Spalart-Allmaras；周期山、圆柱绕流等
-6. 通用化：传热耦合、三维四面体网格验证、更多湍流模型与壁面处理、GPU
+3. ✅ LES：Smagorinsky（Van Driest 阻尼）、WALE、Vreman、σ、动态 Smagorinsky；统计量输出与 OpenLB 的 CSV 格式一致
+4. ✅ 壁面模型 WMLES：Spalding、Musker、Reichardt、对数律、幂律、一维薄层方程（可含压力梯度），可调采样高度；Re_τ=1000 槽道
+5. ✅ RANS：k-ε（标准 / RNG / realizable）、k-ω、k-ω SST、BSL-EARSM、LRR / SSG 雷诺应力模型、Spalart-Allmaras；标准壁面函数与全 y+ 壁面处理；周期山、圆柱绕流等
+6. 通用化：✅ 三维四面体网格验证；传热耦合、GPU
 
 已知限制：TVD 类格式（MUSCL 等）在个别算例上会让 SIMPLE 残差停在 1e-4 左右（限制器反复切换），此时可改用 linearUpwind；
 瞬态大步长（扩散数远大于 1）时 PISO 可能不稳定，需要增大 `nOuter` 或限制步长。

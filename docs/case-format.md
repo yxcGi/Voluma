@@ -296,17 +296,25 @@ u、v、w 依次为流向、展向、法向分量；上下两半按到最近壁�
 
 ```jsonc
 "turbulence": {
-  "model": "kOmegaSST",        // laminar（缺省）| Smagorinsky | WALE | kEpsilon | realizableKE | kOmega | kOmegaSST | BSLEARSM | SpalartAllmaras
-  "wallFunctions": true,       // RANS：壁面函数（k-ε 必须；k-ω/SST 的 ω 壁面值对粘性/对数层自动混合，y+≈1 也可用）
+  "model": "kOmegaSST",        // laminar（缺省）| Smagorinsky | WALE | Vreman | sigma | dynamicSmagorinsky
+                               // | kEpsilon | RNGkEpsilon | realizableKE | kOmega | kOmegaSST | BSLEARSM | SpalartAllmaras
+                               // | LRR | SSG（雷诺应力输运模型，需壁面函数网格 y+ ≥ 15）
+  "wallFunctions": true,       // RANS：壁面函数（k-ε 系列必须；k-ω/SST 默认开，false 为低 Re 处理；SA 默认关，true 时用 Spalding 律）
+  "wallTreatment": "standard", // RANS：standard（nutkWallFunction，y+ 切换）| enhanced（全 y+ 处理，见下）
   "coeffs": { "betaStar": 0.09 },   // 覆盖模型系数（名称同 OpenFOAM）
+  "nutMaxRatio": 1e5,          // ν_t/ν 上限（Fluent 的 turbulent viscosity ratio limit），超限单元数在 y+ 统计行后打印
   "div": "limitedLinear 1",    // 湍流量对流格式
   "relax": 0.7,                // 稳态欠松弛
   "solver": { "solver": "PBiCGStab", "preconditioner": "DILU", "tolerance": 1e-10, "relTol": 0.1 },
   // LES：
-  "vanDriest": true,           // Van Driest 近壁阻尼（Δ = min(Δ, κ y/CΔ (1 − e^{−y+/A+}))）
+  "vanDriest": true,           // Van Driest 近壁阻尼（Δ = min(Δ, κ y/CΔ (1 − e^{−y+/A+}))；动态模型忽略）
   "wallModel": {               // 壁面模型（WMLES），由采样速度按壁面律求 u_τ，给出壁面切应力
-    "type": "spalding",        // spalding | musker | logLaw | powerLaw（Werner-Wengle）
-    "samplingHeight": 0.1      // 采样点离壁距离；0（缺省）为壁面第一层单元
+    "type": "spalding",        // spalding | musker | reichardt | logLaw | powerLaw（Werner-Wengle）| ode
+    "samplingHeight": 0.1,     // 采样点离壁距离；0（缺省）为壁面第一层单元
+    "pressureGradient": false, // 仅 ode：薄层方程含切向压力梯度与体力（非平衡壁面模型）
+    "kappa": 0.41, "B": 5.2,   // 对数律常数（spalding / logLaw / reichardt / ode）
+    "A": 8.3, "Bpow": 0.142857,// 幂律 u+ = A y+^B
+    "Aplus": 17, "nPoints": 40 // ode：混合长度阻尼常数、一维积分点数
   }
 }
 ```
@@ -315,7 +323,41 @@ u、v、w 依次为流向、展向、法向分量；上下两半按到最近壁�
 wall 类型边界不写时自动设置（k、ε、ω 零梯度，壁面单元的 ε、ω 由壁面函数给定；nuTilda 为 0）；
 其他边界不写时为零梯度并会给出提示，入口一般需要给定值。VTK 输出中会附带这些场和 nut，结束时打印壁面 y+。
 
-LES 系数：Smagorinsky `Cs`（默认 0.17；OpenFOAM 默认相当于 0.168）、WALE `Cw`（0.325）、滤波尺度 `deltaCoeff`（1，Δ = 体积立方根，二维取面积平方根）。
+### RANS 壁面处理
+
+| `wallTreatment` | 壁面切应力 | 壁面单元产生项 G | 壁面单元 ε / ω | 适用 y+ |
+| --- | --- | --- | --- | --- |
+| `standard` | nutkWallFunction：y+ = C_μ^¼√k y/ν，y+ > 11.5 时 ν_t,w = ν(κy+/ln(Ey+) − 1)，否则 0 | y+ > 11.5 时对数律 u_τ³/(κy)，否则单元值 | ε：y+ 切换 2νk/y² / C_μ^¾k^{3/2}/(κy)；ω：Menter 粘性/对数混合 | k-ε 要求 y+ > 15；k-ω/SST 任意（缓冲层偏差较大） |
+| `enhanced` | Spalding 统一律由壁面单元切向速度反解 u_τ（任意 y+ 连续） | P = u_τ⁴/ν·D(1−D)，D = du+/dy+（Spalding 律导数；粘性底层 → 0，对数层 → u_τ³/(κy)） | ε：Wolfshtein 长度尺度 k^{3/2}/ℓ_ε（两极限同 standard），并对 Re_y = √k y/ν < 200 的单元两层处理（ε 代数值、ν_t 按 λ_ε 与一方程模型混合，Fluent Enhanced Wall Treatment 同源，常数 `Amu` 70、`Aeps` 2C_ℓ、`ReyStar` 200、`ReyWidth` 20）；ω 同 standard | 全部 y+（k-ε 系列也可用于 y+ ≈ 1 网格） |
+
+`enhanced` 自动把 `wallFunctions` 置为 true。两种处理在 y+ ≈ 5–10（壁面单元落在缓冲层）都会偏高 5–9 %，
+这是壁面单元离散的固有误差（低 Re 解析的 SA 在同样网格上偏差相同），网格设计仍应避开缓冲层；
+数值见 `docs/validation.md` 的 y+ 扫描表（`tools/channel_yplus_sweep.py` 可重跑）。
+
+### LES 系数与壁面模型
+
+LES 系数：Smagorinsky `Cs`（默认 0.17；OpenFOAM 默认相当于 0.168）、WALE `Cw`（0.325）、Vreman `c`（0.07 ≈ 2.5 C_s²）、
+σ 模型 `Csigma`（1.35）、动态 Smagorinsky `CsMax`（0.3，系数上限 C_s² ≤ CsMax²，下限 0）、滤波尺度 `deltaCoeff`（1，Δ = 体积立方根，二维取面积平方根）。
+动态 Smagorinsky 用 Germano-Lilly 过程：检验滤波为面邻接平均（有效宽度 2Δ），C = ⟨L:M⟩/⟨M:M⟩，分子分母再滤波一次作局部平均；
+层流 / 分辨良好区域 C → 0，不需要 Van Driest 阻尼。Vreman 与 σ 模型在层流剪切、二维流动中 ν_t = 0，近壁 ν_t 自然衰减。
+Taylor-Green 涡 Re 1600、64³ 的总耗散峰值（DNS 0.0129 @ t 9.0）：无模型 0.0104 @ 8.4、WALE 0.0105 @ 8.5、Smagorinsky 0.0106 @ 7.4、
+Vreman 0.0103 @ 7.7、σ 0.0102 @ 8.2、动态 Smagorinsky 0.0109 @ 8.4（图 `docs/validation/tgv3d_re1600.png`）：
+动态模型在转捩早期系数自动趋零、峰值最接近 DNS；Vreman / σ 在这类无壁面转捩流中与 Smagorinsky 一样早期偏耗散，
+它们的优势在近壁与层流区 ν_t 自动为零（槽道、分离流）。
+
+壁面模型（WMLES）各律由采样点（第一层单元或 `samplingHeight` 处）的切向相对速度求 u_τ：
+
+| `type` | 公式 | 说明 |
+| --- | --- | --- |
+| `spalding` | Spalding (1961) 统一律 | 全 y+，默认 |
+| `musker` | Musker (1979) | 全 y+ |
+| `reichardt` | Reichardt (1951) u+ = ln(1+κy+)/κ + (B − ln κ/κ)(1 − e^{−y+/11} − (y+/11)e^{−y+/3}) | 全 y+；原文常数 7.8 对应 κ 0.4、B 5.5 |
+| `logLaw` | u+ = ln(E y+)/κ，y+ < 11 线性 | 采样点须在对数层 |
+| `powerLaw` | u+ = A y+^B（8.3，1/7），y+ < 11.8 线性 | 按采样点点值反解（Werner-Wengle 原文的单元积分形式要求 U 为单元平均，这里不用） |
+| `ode` | 一维薄层方程 d/dy[(ν+ν_t)du/dy] = −f_p 数值解，ν_t = κ y u*(1 − e^{−y u*/(νA+)})² | 等价于 Van Driest 剖面；`pressureGradient: true` 时 f_p = −∇_t p + 体力（壁面单元值），u* = (u_τ³ + u_p³)^{1/3}，u_p = (ν\|f_p\|)^{1/3}（Duprat 等 2011），壁面切应力为矢量，可与采样速度方向不同；隐式部分沿壁面单元速度方向，其余作为显式动量源 |
+
+`ode` 不含压力梯度时与 Spalding / Reichardt 一样是平衡律（对 Lee & Moser Re_τ 1000 DNS 剖面在 y+ = 10–300 反解 u_τ 误差 < 0.8 %）；
+含压力梯度的版本用于分离流（周期山等），在槽道中因总切应力随高度线性减小而使 u_τ 偏高 1–4 %（采样越高偏差越大），槽道请用平衡律。
 
 `BSLEARSM`：Menter BSL k-ω + Wallin & Johansson (2000) 显式代数雷诺应力（Fluent/CFX 的 BSL EARSM 同源）。
 各向异性张量用 WJ 的二维解析 N，线性部分给 ν_t = −½β1 τ k，非线性部分作为显式动量源 −∇·τ_ex；
@@ -324,5 +366,21 @@ LES 系数：Smagorinsky `Cs`（默认 0.17；OpenFOAM 默认相当于 0.168）�
 分离回流区混合偏强（周期山再附 x/H 3.2），限制后为 5.3（LES 4.8，SST 7.6）；设 0 关闭。`nonlinear` 0 可关掉非线性应力（诊断）。
 用于分离流（周期山、后台阶等）时比 SST 明显改善回流区长度；槽道 Re_τ 392 给 385。
 
-验证（`cases/channel395`，Re_τ = 392 的 DNS）：k-ω SST 394、k-ω 399、Spalart-Allmaras 390（y+≈0.1）；
-Re_τ ≈ 2000、y+≈50 用壁面函数时 k-ε 1957、SST 1949、realizable k-ε 1909（DNS 2003）。
+`LRR` / `SSG`：雷诺应力输运模型（6 个分量 `Rxx Rxy Rxz Ryy Ryz Rzz` + `epsilon`，均可输出与采样）。压力-应变项 LRR 为
+Launder-Reece-Rodi 1975 的 IP 形式（无壁面反射项；`C1` 1.8、`C2` 0.6、`Ceps2` 1.92），SSG 为 Speziale-Sarkar-Gatski 1991 二次模型
+（`C1` 3.4、`C1s` 1.8、`C2` 4.2、`C3` 0.8、`C3s` 1.3、`C4` 1.25、`C5` 0.4、`Ceps2` 1.83）；`Ceps1` 1.44，各向同性扩散 `sigmaR` 0.82、
+`sigmaEps` 1.0，系数同 OpenFOAM。动量方程按"表观粘度"耦合：ν_t = C_μ k²/ε 隐式，显式源 −∇·dev(R) 再减去已含的 ν_t 部分，
+收敛后总应力即 dev(R)；壁面单元相邻的面用与隐式项一致的紧致梯度，其余面用单元梯度插值以抑制 U–R 奇偶解耦。
+壁面处理同 k-ε（standard / enhanced），另有 `wallAnisotropy`（默认 true）：对数层壁面单元的应力按近壁平衡各向异性给定
+R_ij = a_ij k（uu/k 1.098、nn/k 0.247、ss/k 0.655、−un/k 0.255，Fluent 的 RSM 壁面处理），k 由标准 k 方程在壁面单元上求得
+（场 `k` 在内部单元即 ½ tr R）；关掉时壁面单元 R 取零梯度（OpenFOAM kqRWallFunction）。`relaxR`（稳态默认 0.5）为 R 分量方程的欠松弛。
+适用壁面函数网格（首层 y+ ≥ 15；y+ < 11.5 时壁面单元退化为层流关系、无低 Re 修正，误差 > 10 %）。
+验证（槽道，均匀 32 层、y+ ≈ 60，DNS Re_τ 1995）：LRR 1985（−0.5 %）、SSG 1927（−3.4 %，对数区斜率略陡，是该模型 ε 方程常数
+给出的有效 κ ≈ 0.38 所致）；Re_τ 392、y+ 16–24 的网格上 LRR −2 ~ −3 %、SSG −4.6 %。
+
+`RNGkEpsilon`：Yakhot 等 1992，系数同 OpenFOAM（C_μ 0.0845、C1 1.42、C2 1.68、σ_k = σ_ε 0.71942、`eta0` 4.38、`beta` 0.012），
+ε 方程的 (C1 − R) G ε/k 项中 R = η(1 − η/η0)/(1 + βη³)，η = √(2S:S) k/ε；壁面函数与两层模型的常数仍用 C_μ 0.09（`Cmu`）。
+
+验证（`cases/channel395`，Re_τ = 392 的 DNS）：k-ω SST 394、k-ω 399、Spalart-Allmaras 390、k-ε enhanced 396（y+≈0.1）；
+Re_τ ≈ 2000、y+≈50 用壁面函数时 k-ε 1957、SST 1949、realizable k-ε 1909（DNS 2003），y+≈60 时 LRR 1985、SSG 1927（DNS 1995）；
+完整 y+ 扫描见 `docs/validation.md`。

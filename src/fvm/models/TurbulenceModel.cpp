@@ -18,6 +18,7 @@ TurbulenceModel::TurbulenceModel(IncompressibleFlow& flow, const Json& dict, con
     const bool steady = flow.controls.steady;
     controls_ = parseSolverControls(dict["solver"], {"PBiCGStab", "DILU", 1e-10, steady ? 0.1 : 0.0, 1000, 0, 1});
     relax_ = dict.get("relax", steady ? 0.7 : 1.0);
+    nutMaxRatio_ = dict.get("nutMaxRatio", 1e5);
     kappa_ = coeff("kappa", 0.41);
     E_ = coeff("E", 9.8);
     Cmu_ = coeff("Cmu", 0.09);
@@ -210,7 +211,15 @@ void TurbulenceModel::correct() {
     }
     updateWallFaces();
     correctModel();
-    m_.halo().exchange(flow_.nut());
+    auto& nut = flow_.nut();
+    nLimited_ = 0;
+    const scalar nutMax = nutMaxRatio_ * nu_;
+    for (label c = 0; c < m_.nCells(); ++c)
+        if (!(nut[c] <= nutMax)) {  // 也捕获 NaN
+            nut[c] = std::isfinite(nut[c]) ? nutMax : 0.0;
+            ++nLimited_;
+        }
+    m_.halo().exchange(nut);
 }
 
 std::vector<scalar> TurbulenceModel::yPlusWall() const {
@@ -234,6 +243,8 @@ void TurbulenceModel::printYPlus(std::ostream& os) const {
     par::allSumInPlace(s, 2);
     if (par::master() && s[1] > 0)
         os << "  wall y+: min " << mn << "  mean " << s[0] / s[1] << "  max " << mx << '\n';
+    const glabel nl = par::allSum(glabel(nLimited_));
+    if (par::master() && nl > 0) os << "  turbulence: nut limited to " << nutMaxRatio_ << " nu in " << nl << " cells\n";
 }
 
 void TurbulenceModel::writeRestart(const std::string& dir) {
@@ -265,12 +276,15 @@ std::unique_ptr<TurbulenceModel> TurbulenceModel::create(IncompressibleFlow& flo
                                                          const Json& initial) {
     const std::string type = d.get("model", "laminar");
     if (type == "laminar") return nullptr;
-    if (type == "Smagorinsky" || type == "WALE") return makeLES(flow, d, boundary, initial, type);
-    if (type == "kEpsilon" || type == "realizableKE" || type == "kOmega" || type == "kOmegaSST" || type == "BSLEARSM" ||
-        type == "SpalartAllmaras")
+    if (type == "Smagorinsky" || type == "WALE" || type == "Vreman" || type == "sigma" || type == "Sigma" ||
+        type == "dynamicSmagorinsky")
+        return makeLES(flow, d, boundary, initial, type);
+    if (type == "kEpsilon" || type == "RNGkEpsilon" || type == "realizableKE" || type == "kOmega" ||
+        type == "kOmegaSST" || type == "BSLEARSM" || type == "SpalartAllmaras" || type == "LRR" || type == "SSG")
         return makeRAS(flow, d, boundary, initial, type);
     throw std::runtime_error("turbulence.model: unknown model '" + type +
-                             "' (laminar, Smagorinsky, WALE, kEpsilon, realizableKE, kOmega, kOmegaSST, SpalartAllmaras)");
+                             "' (laminar, Smagorinsky, WALE, Vreman, sigma, dynamicSmagorinsky, kEpsilon, RNGkEpsilon, "
+                             "realizableKE, kOmega, kOmegaSST, BSLEARSM, LRR, SSG, SpalartAllmaras)");
 }
 
 } // namespace cfd

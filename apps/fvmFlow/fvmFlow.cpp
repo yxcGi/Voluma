@@ -382,6 +382,10 @@ void runCase(const std::string& caseFile) {
             const std::string name = l.get("name", "line");
             line.writeTable(out + "/line_" + name + "_U.csv", flow.U());
             line.writeTable(out + "/line_" + name + "_p.csv", flow.p());
+            if (turb) {
+                for (auto* f : turb->fields()) line.writeTable(out + "/line_" + name + "_" + f->name() + ".csv", *f);
+                line.writeTable(out + "/line_" + name + "_nut.csv", flow.nut().data(), 1, "nut");
+            }
         }
     };
 
@@ -395,6 +399,9 @@ void runCase(const std::string& caseFile) {
         int it = 0;
         for (it = 1; it <= maxIter; ++it) {
             const StepInfo info = flow.step(1.0);
+            if (!std::isfinite(info.UInitialResidual) || !std::isfinite(info.pInitialResidual) ||
+                !std::isfinite(info.continuityError))
+                throw std::runtime_error("solution diverged (non-finite residual) at iteration " + std::to_string(it));
             const bool conv = it > 1 && info.UInitialResidual < tol && info.pInitialResidual < tol;
             if (it == 1 || it % printInterval == 0 || conv)
                 std::cout << "iter " << it << "  U res " << info.UInitialResidual << "  p res " << info.pInitialResidual
@@ -444,6 +451,9 @@ void runCase(const std::string& caseFile) {
             }
             const StepInfo info = flow.step(dt);
             ++n;
+            if (!std::isfinite(info.maxCo) || !std::isfinite(info.continuityError))
+                throw std::runtime_error("solution diverged (non-finite Courant number / continuity error) at t = " +
+                                         std::to_string(flow.time().time));
             if (n % printInterval == 0)
                 std::cout << "t " << flow.time().time << "  dt " << dt << "  Co " << info.maxCo << "  cont "
                           << info.continuityError << '\n';

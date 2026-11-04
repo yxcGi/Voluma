@@ -1,7 +1,9 @@
-// LES 亚格子模型（Smagorinsky、WALE）与壁面模型（WMLES）。
+// LES 亚格子模型（Smagorinsky、WALE、Vreman、σ、动态 Smagorinsky）与壁面模型（WMLES）。
+#include "fvm/discretization/Fvc.h"
 #include "fvm/mesh/PointSearch.h"
 #include "fvm/mesh/WallDistance.h"
 #include "fvm/models/TurbulenceModel.h"
+#include "fvm/models/WallLaw.h"
 
 #include <cmath>
 #include <iostream>
@@ -10,84 +12,6 @@
 namespace cfd {
 
 namespace {
-
-// ------------------------------------------------------------ 壁面律：由 (U, y) 求 u_τ
-class WallLaw {
-public:
-    enum class Type { LogLaw, Spalding, Musker, PowerLaw };
-    Type type = Type::Spalding;
-    scalar kappa = 0.41, B = 5.2;
-    scalar A = 8.3, Bpow = 1.0 / 7.0;  // Werner-Wengle 幂律 u+ = A y+^B
-
-    static Type parse(const std::string& s) {
-        if (s == "logLaw") return Type::LogLaw;
-        if (s == "spalding") return Type::Spalding;
-        if (s == "musker") return Type::Musker;
-        if (s == "powerLaw" || s == "wernerWengle") return Type::PowerLaw;
-        throw std::runtime_error("wallModel.type must be logLaw, spalding, musker or powerLaw");
-    }
-
-    // 给定 y+ 的 u+（隐式律用于牛顿迭代）
-    scalar uPlusMusker(scalar yp) const {
-        // Musker (1979)：κ = 0.41，s = 0.001093
-        return 5.424 * std::atan((2 * yp - 8.15) / 16.7) +
-               std::log10(std::pow(yp + 10.6, 9.6) / std::pow(yp * yp - 8.15 * yp + 86, 2)) - 3.52;
-    }
-    // Spalding：y+ = u+ + e^{−κB}(e^{κu+} − 1 − κu+ − (κu+)²/2 − (κu+)³/6)
-    scalar yPlusSpalding(scalar up) const {
-        const scalar k = kappa * up;
-        return up + std::exp(-kappa * B) * (std::exp(k) - 1 - k - k * k / 2 - k * k * k / 6);
-    }
-
-    scalar uTau(scalar U, scalar y, scalar nu) const {
-        if (U <= 0 || y <= 0) return 0;
-        const scalar uLam = std::sqrt(nu * U / y);  // 线性律
-        switch (type) {
-        case Type::PowerLaw: {
-            // Werner & Wengle (1991) 在首层内积分的显式形式
-            const scalar lim = nu / (2 * y) * std::pow(A, 2 / (1 - Bpow));
-            if (U <= lim) return std::sqrt(2 * nu * U / y);
-            const scalar t = (1 - Bpow) / 2 * std::pow(A, (1 + Bpow) / (1 - Bpow)) * std::pow(nu / y, 1 + Bpow) +
-                             (1 + Bpow) / A * std::pow(nu / y, Bpow) * U;
-            return std::sqrt(std::pow(t, 2 / (1 + Bpow)));
-        }
-        case Type::LogLaw: {
-            // U/u_τ = ln(E y u_τ/ν)/κ，y+ < 11 时取线性律
-            const scalar E = std::exp(kappa * B);
-            scalar ut = std::max(uLam, 1e-12);
-            for (int it = 0; it < 50; ++it) {
-                const scalar yp = y * ut / nu;
-                if (yp < 11.0) return uLam;
-                const scalar f = ut * std::log(E * yp) / kappa - U;
-                const scalar df = (std::log(E * yp) + 1) / kappa;
-                const scalar dut = f / df;
-                ut = std::max(ut - dut, 0.5 * ut);
-                if (std::abs(dut) < 1e-10 * ut) break;
-            }
-            return ut;
-        }
-        case Type::Spalding:
-        case Type::Musker: {
-            // 牛顿迭代（u+ 与 y+ 之间单调），失败时用二分
-            auto res = [&](scalar ut) {
-                const scalar up = U / ut, yp = y * ut / nu;
-                // 两者都在 u_τ 很小时为正、随 u_τ 单调减小
-                return type == Type::Spalding ? yPlusSpalding(up) - yp : up - uPlusMusker(yp);
-            };
-            scalar lo = 1e-8 * uLam + 1e-14, hi = uLam * 1.0001 + 1e-14;
-            // res(lo) > 0；线性律值处 res ≥ 0，向上加倍直到变号
-            while (res(hi) > 0) hi *= 2;
-            for (int it = 0; it < 100; ++it) {
-                const scalar mid = 0.5 * (lo + hi);
-                (res(mid) > 0 ? lo : hi) = mid;
-                if (hi - lo < 1e-12 * hi) break;
-            }
-            return 0.5 * (lo + hi);
-        }
-        }
-        return uLam;
-    }
-};
 
 // ------------------------------------------------------------ LES 基类
 class LESModel : public TurbulenceModel {
@@ -118,24 +42,47 @@ public:
             law_.B = w.get("B", 5.2);
             law_.A = w.get("A", 8.3);
             law_.Bpow = w.get("Bpow", 1.0 / 7.0);
+            law_.Aplus = w.get("Aplus", 17.0);
+            law_.nPoints = int(w.get("nPoints", 40.0));
+            law_.pressureGradient = w.get("pressureGradient", false);
+            if (law_.pressureGradient && law_.type != WallLaw::Type::ODE)
+                throw std::runtime_error("wallModel.pressureGradient is only available with type \"ode\"");
             samplingHeight_ = w.get("samplingHeight", 0.0);
             wallModel_ = true;
             if (samplingHeight_ > 0) setupSampling();
+            if (par::master())
+                std::cout << "wall model: " << WallLaw::name(law_.type)
+                          << (law_.pressureGradient ? " (with tangential pressure gradient / body force)" : "")
+                          << ", sampling height " << samplingHeight_ << '\n';
         }
         if (vanDriest_) (void)wallDistance(m_);
     }
 
 protected:
-    // 由速度梯度与滤波尺度求 ν_t（单元）
+    // 由速度梯度与滤波尺度求 ν_t（单元）；动态模型重载 correctNut
     virtual scalar nutCell(const Tensor& gradU, scalar delta) const = 0;
+    virtual void correctNut(const std::vector<scalar>& delta) {
+        const auto& G = flow_.gradU();
+        auto& nut = flow_.nut();
+        for (label c = 0; c < m_.nCells(); ++c) nut[c] = nutCell(G[c], delta[c]);
+    }
 
     void correctModel() override {
-        const auto& G = flow_.gradU();
         const std::size_t nw = wallFaces_.size();
         uTauWall_.assign(nw, 0.0);
         std::vector<scalar> nutw(nw, 0.0);
         std::vector<Vec3> Us;
         if (wallModel_ && samplingHeight_ > 0) Us = sampleVelocity();
+        const bool vectorLaw = wallModel_ && law_.type == WallLaw::Type::ODE;
+        std::vector<Vec3> gp;
+        if (vectorLaw && law_.pressureGradient) gp = fvc::grad(flow_.p());
+        Vec3 fBody{};
+        if (flow_.forcing.mode == MomentumForcing::Mode::Constant) fBody = flow_.forcing.force;
+        if (flow_.forcing.mode == MomentumForcing::Mode::MeanVelocity)
+            fBody = flow_.forcing.Ubar * (flow_.forcing.gradP / mag(flow_.forcing.Ubar));
+        auto& src = flow_.turbSource();
+        if (vectorLaw) src.assign(m_.nTotalCells(), Vec3{});
+        const auto& U = flow_.U();
         for (std::size_t i = 0; i < nw; ++i) {
             const WallFace& w = wallFaces_[i];
             if (!wallModel_) {
@@ -143,41 +90,98 @@ protected:
                 uTauWall_[i] = std::sqrt(nu_ * w.magUt / w.y);
                 continue;
             }
-            scalar Ut = w.magUt, y = w.y;
+            // 采样点的切向相对速度
+            Vec3 ut = U[w.cell] - U.bValue(w.face);
+            scalar y = w.y;
             if (samplingHeight_ > 0) {
-                Vec3 du = Us[i] - flow_.U().bValue(w.face);
-                du -= dot(du, w.n) * w.n;
-                Ut = mag(du);
+                ut = Us[i] - U.bValue(w.face);
                 y = sampleY_[i];
             }
-            const scalar ut = law_.uTau(Ut, y, nu_);
-            uTauWall_[i] = ut;
-            // 使壁面扩散通量 ν_eff·Δ⁻¹·|U_P,t| 等于 τ_w = u_τ²
+            ut -= dot(ut, w.n) * w.n;
             const scalar ndc = m_.nonOrthDeltaCoeffs()[w.face];
-            const scalar nuEff = w.magUt > 1e-12 ? ut * ut / (ndc * w.magUt) : nu_;
-            nutw[i] = std::max(nuEff - nu_, 0.0);
+            if (!vectorLaw) {
+                const scalar uTau = law_.uTau(mag(ut), y, nu_);
+                uTauWall_[i] = uTau;
+                // 使壁面扩散通量 ν_eff·Δ⁻¹·|U_P,t| 等于 τ_w = u_τ²
+                const scalar nuEff = w.magUt > 1e-12 ? uTau * uTau / (ndc * w.magUt) : nu_;
+                nutw[i] = std::max(nuEff - nu_, 0.0);
+                continue;
+            }
+            // ODE 壁面模型（矢量）：切向驱动力 f_p = −∇p + 体力（壁面单元值，切向投影）
+            Vec3 fp{};
+            if (law_.pressureGradient) {
+                fp = fBody - gp[w.cell];
+                fp -= dot(fp, w.n) * w.n;
+            }
+            const Vec3 tau = law_.odeWallShear(ut, y, nu_, fp);
+            uTauWall_[i] = std::sqrt(mag(tau));
+            // 隐式部分沿壁面单元切向速度方向，其余显式加到壁面单元的动量源
+            Vec3 uP = U[w.cell] - U.bValue(w.face);
+            uP -= dot(uP, w.n) * w.n;
+            const scalar magUP = mag(uP);
+            scalar nuEff = nu_;
+            if (magUP > 1e-12) {
+                const scalar tauPar = dot(tau, uP) / magUP;
+                nuEff = std::max(tauPar / (ndc * magUP), nu_);
+            }
+            nutw[i] = nuEff - nu_;
+            // 壁面对流体的作用力 −τ_w|S_f|，减去隐式已包含的 −ν_eff Δ⁻¹ U_P,t |S_f|（单位质量）
+            const Vec3 residual = (nuEff * ndc * uP - tau) * (m_.magSf()[w.face] / m_.V()[w.cell]);
+            src[w.cell] += residual;
         }
         setWallNut(nutw);
+        if (vectorLaw && m_.twoD())
+            for (label c = 0; c < m_.nCells(); ++c) src[c][m_.emptyDir()] = 0.0;
 
         std::vector<scalar> uTauNearest;
         const WallDistance* wd = nullptr;
+        std::vector<scalar> delta = delta_;
         if (vanDriest_) {
             wd = &wallDistance(m_);
             std::vector<scalar> bf(m_.nBoundaryFaces(), 0.0);
             for (std::size_t i = 0; i < nw; ++i) bf[wallFaces_[i].face - m_.nInternalFaces()] = uTauWall_[i];
             uTauNearest = gatherWallFaces(m_, bf);
+            if (wd->hasWalls)
+                for (label c = 0; c < m_.nCells(); ++c) {
+                    const scalar y = wd->y[c];
+                    const scalar ut = uTauNearest[wd->nearest[c]];
+                    const scalar yPlus = y * ut / nu_;
+                    delta[c] = std::min(delta[c], kappa_ / Cdelta_ * y * (1 - std::exp(-yPlus / Aplus_)));
+                }
         }
-        auto& nut = flow_.nut();
-        for (label c = 0; c < m_.nCells(); ++c) {
-            scalar delta = delta_[c];
-            if (wd && wd->hasWalls) {
-                const scalar y = wd->y[c];
-                const scalar ut = uTauNearest[wd->nearest[c]];
-                const scalar yPlus = y * ut / nu_;
-                delta = std::min(delta, kappa_ / Cdelta_ * y * (1 - std::exp(-yPlus / Aplus_)));
+        correctNut(delta);
+    }
+
+    // 检验滤波（OpenFOAM simpleFilter）：φ̂_P = Σ_f |S_f| φ_f / Σ_f |S_f|，φ_f 线性插值，边界面取单元值；
+    // 有效滤波宽度约为 2Δ。结果含幽灵单元（已交换）。
+    template <class T> std::vector<T> filter(const std::vector<T>& c) const {
+        const label nC = m_.nCells(), nT = m_.nTotalCells(), nI = m_.nInternalFaces();
+        std::vector<T> r(nT, Traits<T>::zero());
+        std::vector<scalar> ws(nC, 0.0);
+        const auto& w = m_.w();
+        const auto& magSf = m_.magSf();
+        // 进程间面的 owner 或 neighbour 可能是幽灵单元，只累加到本进程单元
+        for (label f = 0; f < nI; ++f) {
+            const label o = m_.owner()[f], n = m_.neighbour()[f];
+            const T fv = w[f] * c[o] + (1.0 - w[f]) * c[n];
+            if (o < nC) {
+                r[o] += magSf[f] * fv;
+                ws[o] += magSf[f];
             }
-            nut[c] = nutCell(G[c], delta);
+            if (n < nC) {
+                r[n] += magSf[f] * fv;
+                ws[n] += magSf[f];
+            }
         }
+        for (label f = nI; f < m_.nFaces(); ++f) {
+            const label o = m_.owner()[f];
+            if (o >= nC) continue;
+            r[o] += magSf[f] * c[o];
+            ws[o] += magSf[f];
+        }
+        for (label c2 = 0; c2 < nC; ++c2) r[c2] = r[c2] * (1.0 / ws[c2]);
+        m_.halo().exchange(r);
+        return r;
     }
 
     void setupSampling() {
@@ -300,11 +304,140 @@ protected:
     scalar Cw_;
 };
 
+// Vreman (2004)：ν_t = c √(B_β/(α:α))，α_ij = ∂u_j/∂x_i，β_ij = Δ² α_mi α_mj，
+// B_β = β11β22 − β12² + β11β33 − β13² + β22β33 − β23²；c ≈ 2.5 C_s²（C_s = 0.17 → 0.07）。
+// 层流剪切、纯拉伸等简单流动中 ν_t = 0（与 WALE 类似，优于 Smagorinsky）。
+class Vreman : public LESModel {
+public:
+    Vreman(IncompressibleFlow& f, const Json& d, const Json& b, const Json& i) : LESModel(f, d, b, i) {
+        c_ = coeff("c", 0.07);
+    }
+    std::string type() const override { return "Vreman"; }
+
+protected:
+    scalar nutCell(const Tensor& G, scalar delta) const override {
+        const scalar aa = magSqr(G);
+        if (aa < 1e-300) return 0.0;
+        const Tensor beta = (delta * delta) * dot(transpose(G), G);
+        const scalar Bb = beta.xx * beta.yy - beta.xy * beta.xy + beta.xx * beta.zz - beta.xz * beta.xz +
+                          beta.yy * beta.zz - beta.yz * beta.yz;
+        return c_ * std::sqrt(std::max(Bb, 0.0) / aa);
+    }
+    scalar c_;
+};
+
+// 对称 3×3 矩阵的特征值（降序），三角法
+static void eigenSymm(const Tensor& A, scalar& l1, scalar& l2, scalar& l3) {
+    const scalar p1 = A.xy * A.xy + A.xz * A.xz + A.yz * A.yz;
+    if (p1 < 1e-300) {
+        scalar v[3] = {A.xx, A.yy, A.zz};
+        std::sort(v, v + 3);
+        l1 = v[2], l2 = v[1], l3 = v[0];
+        return;
+    }
+    const scalar q = trace(A) / 3;
+    const scalar p2 = (A.xx - q) * (A.xx - q) + (A.yy - q) * (A.yy - q) + (A.zz - q) * (A.zz - q) + 2 * p1;
+    const scalar p = std::sqrt(p2 / 6);
+    const Tensor Bm = (A - q * identity()) * (1.0 / p);
+    const scalar detB = Bm.xx * (Bm.yy * Bm.zz - Bm.yz * Bm.zy) - Bm.xy * (Bm.yx * Bm.zz - Bm.yz * Bm.zx) +
+                        Bm.xz * (Bm.yx * Bm.zy - Bm.yy * Bm.zx);
+    const scalar r = std::clamp(detB / 2, -1.0, 1.0);
+    const scalar phi = std::acos(r) / 3;
+    l1 = q + 2 * p * std::cos(phi);
+    l3 = q + 2 * p * std::cos(phi + 2 * M_PI / 3);
+    l2 = 3 * q - l1 - l3;
+}
+
+// σ 模型（Nicoud 等 2011）：ν_t = (C_σ Δ)² σ3(σ1 − σ2)(σ2 − σ3)/σ1²，σ_i 为 ∇u 的奇异值（降序）。
+// 二维流动、轴对称、各向同性拉伸中 ν_t = 0，近壁 ν_t ~ y³。
+class Sigma : public LESModel {
+public:
+    Sigma(IncompressibleFlow& f, const Json& d, const Json& b, const Json& i) : LESModel(f, d, b, i) {
+        Csigma_ = coeff("Csigma", 1.35);
+    }
+    std::string type() const override { return "sigma"; }
+
+protected:
+    scalar nutCell(const Tensor& G, scalar delta) const override {
+        const Tensor GtG = dot(transpose(G), G);
+        scalar l1, l2, l3;
+        eigenSymm(GtG, l1, l2, l3);
+        const scalar s1 = std::sqrt(std::max(l1, 0.0)), s2 = std::sqrt(std::max(l2, 0.0)),
+                     s3 = std::sqrt(std::max(l3, 0.0));
+        if (s1 < 1e-150) return 0.0;
+        const scalar D = s3 * (s1 - s2) * (s2 - s3) / (s1 * s1);
+        return Csigma_ * Csigma_ * delta * delta * std::max(D, 0.0);
+    }
+    scalar Csigma_;
+};
+
+// 动态 Smagorinsky（Germano 等 1991，Lilly 1992 最小二乘）：
+//   L_ij = \hat{u_i u_j} − û_i û_j，M_ij = 2Δ²(\hat{|S|S_ij} − 4|Ŝ|Ŝ_ij)（检验滤波比 2），
+//   C = <L:M>/<M:M>（分子分母再做一次滤波作局部平均，Zang 等 1993），ν_t = C Δ² |S|，
+//   C 限制在 [0, CsMax²]（不允许负粘性/反向散射）。层流或分辨良好的区域 C → 0。
+class DynamicSmagorinsky : public LESModel {
+public:
+    DynamicSmagorinsky(IncompressibleFlow& f, const Json& d, const Json& b, const Json& i) : LESModel(f, d, b, i) {
+        CsMax_ = coeff("CsMax", 0.3);
+        if (vanDriest_ && par::master()) std::cout << "dynamicSmagorinsky: vanDriest damping is ignored\n";
+    }
+    std::string type() const override { return "dynamicSmagorinsky"; }
+    // 最近一次的系数场（诊断）
+    const std::vector<scalar>& Cs2() const { return C_; }
+
+protected:
+    scalar nutCell(const Tensor&, scalar) const override { return 0.0; }
+
+    void correctNut(const std::vector<scalar>&) override {
+        const label nT = m_.nTotalCells(), nC = m_.nCells();
+        const auto& G = flow_.gradU();
+        const auto& U = flow_.U();
+        std::vector<Vec3> u(nT);
+        std::vector<Tensor> uu(nT), S(nT), SS(nT);
+        std::vector<scalar> magS(nT);
+        for (label c = 0; c < nT; ++c) {
+            u[c] = U[c];
+            uu[c] = outer(U[c], U[c]);
+            S[c] = symm(G[c]);
+            magS[c] = std::sqrt(2 * magSqr(S[c]));
+            SS[c] = magS[c] * S[c];
+        }
+        const auto uf = filter(u);
+        const auto uuf = filter(uu);
+        const auto Sf = filter(S);
+        const auto SSf = filter(SS);
+        std::vector<scalar> LM(nT, 0.0), MM(nT, 0.0);
+        for (label c = 0; c < nC; ++c) {
+            const Tensor L = dev(uuf[c] - outer(uf[c], uf[c]));
+            const scalar magSf = std::sqrt(2 * magSqr(Sf[c]));
+            const Tensor M = (2 * delta_[c] * delta_[c]) * (SSf[c] - 4 * magSf * Sf[c]);
+            LM[c] = doubleDot(L, M);
+            MM[c] = doubleDot(M, M);
+        }
+        m_.halo().exchange(LM);
+        m_.halo().exchange(MM);
+        const auto aLM = filter(LM), aMM = filter(MM);
+        auto& nut = flow_.nut();
+        C_.assign(nT, 0.0);
+        const scalar Cmax = CsMax_ * CsMax_;
+        for (label c = 0; c < nC; ++c) {
+            C_[c] = aMM[c] > 1e-300 ? std::clamp(aLM[c] / aMM[c], 0.0, Cmax) : 0.0;
+            nut[c] = C_[c] * delta_[c] * delta_[c] * magS[c];
+        }
+    }
+
+    scalar CsMax_;
+    std::vector<scalar> C_;
+};
+
 } // namespace
 
 std::unique_ptr<TurbulenceModel> makeLES(IncompressibleFlow& flow, const Json& d, const Json& b, const Json& i,
                                          const std::string& type) {
     if (type == "Smagorinsky") return std::make_unique<Smagorinsky>(flow, d, b, i);
+    if (type == "Vreman") return std::make_unique<Vreman>(flow, d, b, i);
+    if (type == "sigma" || type == "Sigma") return std::make_unique<Sigma>(flow, d, b, i);
+    if (type == "dynamicSmagorinsky") return std::make_unique<DynamicSmagorinsky>(flow, d, b, i);
     return std::make_unique<WALE>(flow, d, b, i);
 }
 

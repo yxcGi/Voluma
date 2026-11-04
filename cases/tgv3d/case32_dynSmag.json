@@ -1,0 +1,13 @@
+// 回归测试用的 32³ 动态 Smagorinsky 版本（见 case.json / case32.json）：算到 t = 12 覆盖耗散峰值，−dk/dt 峰值与 DNS 偏差容许 30%
+//   动态系数在层流早期 → 0，耗散峰值时刻应接近 DNS（静态 Smagorinsky 峰值提前约 1.5）
+{
+  "mesh": { "box": { "n": [32, 32, 32], "lo": [0, 0, 0], "hi": [6.283185307179586, 6.283185307179586, 6.283185307179586],
+                     "periodic": [true, true, true] } },
+  "physics": { "nu": 6.25e-4, "steady": false },
+  "turbulence": { "model": "dynamicSmagorinsky" },
+  "initial": { "taylorGreen": { "U0": 1, "L": 1 } },
+  "schemes": { "div": "linear", "ddt": "backward" },
+  "solution": { "nOuter": 1, "nCorr": 2, "nNonOrthCorr": 0 },
+  "run": { "endTime": 12, "dt": 0.02, "printInterval": 100, "vtk": false },
+  "monitor": { "interval": 1 }
+}
