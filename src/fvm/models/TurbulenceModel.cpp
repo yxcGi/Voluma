@@ -109,7 +109,34 @@ bool TurbulenceModel::setTurbulentInlet(ScalarField& f, const std::string& patch
 }
 
 void TurbulenceModel::bound(ScalarField& f, scalar minValue) {
-    for (auto& v : f.internal()) v = std::max(v, minValue);
+    auto& v = f.internal();
+    const label nC = m_.nCells();
+    label nBad = 0;
+    for (label c = 0; c < nC; ++c)
+        if (!(v[c] >= minValue)) ++nBad;  // 也捕获 NaN
+    const glabel nBadG = par::allSum(glabel(nBad));
+    if (nBadG > 0) {
+        f.exchangeGhosts();
+        std::vector<double> sum(nC, 0.0);
+        std::vector<int> cnt(nC, 0);
+        const auto& own = m_.owner();
+        const auto& nei = m_.neighbour();
+        for (label fc = 0; fc < m_.nInternalFaces(); ++fc) {
+            const label o = own[fc], n = nei[fc];
+            if (o < nC && !(v[o] >= minValue) && v[n] >= minValue) {
+                sum[o] += v[n];
+                ++cnt[o];
+            }
+            if (n < nC && !(v[n] >= minValue) && v[o] >= minValue) {
+                sum[n] += v[o];
+                ++cnt[n];
+            }
+        }
+        for (label c = 0; c < nC; ++c)
+            if (!(v[c] >= minValue)) v[c] = cnt[c] > 0 ? std::max(sum[c] / cnt[c], minValue) : minValue;
+        f.exchangeGhosts();
+    }
+    nBounded_[f.name()] = nBadG;
     f.correctBoundaryConditions();
 }
 
@@ -245,6 +272,44 @@ void TurbulenceModel::printYPlus(std::ostream& os) const {
         os << "  wall y+: min " << mn << "  mean " << s[0] / s[1] << "  max " << mx << '\n';
     const glabel nl = par::allSum(glabel(nLimited_));
     if (par::master() && nl > 0) os << "  turbulence: nut limited to " << nutMaxRatio_ << " nu in " << nl << " cells\n";
+    if (par::master())
+        for (const auto& [name, nb] : nBounded_)
+            if (nb > 0) os << "  turbulence: bounding " << name << " in " << nb << " cells\n";
+}
+
+std::vector<scalar> TurbulenceModel::yPlusBoundaryFaces() const {
+    std::vector<scalar> yp(m_.nBoundaryFaces(), -1.0);
+    const label nI = m_.nInternalFaces();
+    for (std::size_t i = 0; i < wallFaces_.size(); ++i)
+        yp[wallFaces_[i].face - nI] = wallFaces_[i].y * (i < uTauWall_.size() ? uTauWall_[i] : 0.0) / nu_;
+    return yp;
+}
+
+void TurbulenceModel::initializeFromInlets() {
+    const auto& phi = flow_.phi();
+    for (auto* f : fields_) {
+        if (initial_.has(f->name()) || f->name() == "nut" || f->name() == "yPlus") continue;
+        f->updateBCs(flow_.time().time);
+        f->correctBoundaryConditions();
+        par::SumAcc s[2];
+        for (const Patch& pt : m_.patches()) {
+            if (pt.type == PatchType::Wall || pt.type == PatchType::Cyclic || pt.type == PatchType::Empty ||
+                pt.type == PatchType::Symmetry)
+                continue;
+            for (label fc = pt.start; fc < pt.end(); ++fc)
+                if (phi[fc] < 0) {
+                    s[0].add(f->bValue(fc) * m_.magSf()[fc]);
+                    s[1].add(m_.magSf()[fc]);
+                }
+        }
+        double r[2];
+        par::SumAcc::allReduce(s, 2, r);
+        if (r[1] > 0) {
+            f->setUniform(r[0] / r[1]);
+            f->correctBoundaryConditions();
+            if (par::master()) std::cout << "turbulence: " << f->name() << " initialised from inlets: " << r[0] / r[1] << '\n';
+        }
+    }
 }
 
 void TurbulenceModel::writeRestart(const std::string& dir) {

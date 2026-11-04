@@ -12,10 +12,14 @@
 #include "fvm/models/Energy.h"
 #include "fvm/models/TurbulenceModel.h"
 #include "fvm/post/ChannelStatistics.h"
+#include "fvm/post/CutPlane.h"
+#include "fvm/post/FieldAverage.h"
 #include "fvm/post/Forces.h"
 #include "fvm/post/SpanStatistics.h"
+#include "fvm/post/WallOutput.h"
 #include "fvm/solvers/IncompressibleFlow.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
@@ -209,16 +213,24 @@ void runCase(const std::string& caseFile) {
         U.correctBoundaryConditions();
     }
     flow.initialize();
-    if (ini.get("potentialFlow", false)) {
+    // 混合初始化（与 Fluent hybrid initialization 同效）：势流投影得到无散的速度场，压力按 Bernoulli 给出，
+    // 湍流量取入流边界值（湍流模型创建后做）；单独的 potentialFlow 只做投影
+    const bool hybrid = ini.get("hybrid", false);
+    if (ini.get("potentialFlow", false) || hybrid) {
         // 初场投影成无散场（曲面域、周期域的均匀初场散度很大，稳态第一步可能发散）
         flow.projectDivergenceFree(int(ini.get("potentialFlowNonOrthCorr", 2.0)));
         if (par::master()) std::cout << "initial field projected to be divergence-free\n";
+    }
+    if (hybrid) {
+        const scalar H = flow.setBernoulliPressure();
+        if (par::master()) std::cout << "hybrid initialisation: potential flow + Bernoulli pressure (total head " << H << ")\n";
     }
 
     // 湍流模型（缺省为层流）
     std::unique_ptr<TurbulenceModel> turb;
     if (cfg.has("turbulence")) turb = TurbulenceModel::create(flow, cfg["turbulence"], bnd, ini);
     if (turb && par::master()) std::cout << "turbulence model: " << turb->type() << '\n';
+    if (turb && hybrid) turb->initializeFromInlets();
     // 能量方程（可选）：温度输运 + Boussinesq 浮力 + 热壁面函数
     std::unique_ptr<EnergyModel> energy;
     if (cfg.has("energy")) {
@@ -231,8 +243,10 @@ void runCase(const std::string& caseFile) {
     // 运行控制与输出
     const Json& run = cfg["run"];
     const std::string out = resolvePath(dir, run.get("output", "output"));
+    std::string restartReadDir;
     if (run.has("restartRead")) {
         const std::string rd = resolvePath(dir, run["restartRead"].string());
+        restartReadDir = rd;
         if (!restart::read(rd, flow)) throw std::runtime_error("restart data not found in " + rd);
         if (turb) turb->readRestart(rd);
         if (energy) energy->readRestart(rd);
@@ -250,6 +264,125 @@ void runCase(const std::string& caseFile) {
     if (energy)
         for (auto* f : energy->fields()) vtk.add(*f);
     const bool writeVtk = run.get("vtk", true);
+
+    // 网格质量：坏单元统计（所含面的最大非正交角、偏斜度、面积比超过阈值），有坏单元时写 badCells.csv；
+    // run.meshQuality 为 true 时三个单元质量量也写进 VTK
+    std::vector<scalar> qNonOrth = mesh->cellNonOrthogonality(), qSkew = mesh->cellSkewness(),
+                        qAspect = mesh->cellAspectRatio();
+    {
+        const scalar nonOrthWarn = run.get("nonOrthWarn", 70.0), skewWarn = run.get("skewWarn", 1.0),
+                     aspectWarn = run.get("aspectWarn", 1000.0);
+        std::vector<double> bad;
+        double cnt[3] = {0, 0, 0};
+        for (label c = 0; c < mesh->nCells(); ++c) {
+            const bool b0 = qNonOrth[c] > nonOrthWarn, b1 = qSkew[c] > skewWarn, b2 = qAspect[c] > aspectWarn;
+            cnt[0] += b0;
+            cnt[1] += b1;
+            cnt[2] += b2;
+            if (b0 || b1 || b2) {
+                const Vec3& x = mesh->C()[c];
+                bad.insert(bad.end(), {double(mesh->cellGlobal()[c]), x.x, x.y, x.z, qNonOrth[c], qSkew[c], qAspect[c]});
+            }
+        }
+        par::allSumInPlace(cnt, 3);
+        const auto all = par::gatherDoublesToMaster(bad);
+        if (par::master() && cnt[0] + cnt[1] + cnt[2] > 0) {
+            std::cout << "mesh quality: " << cnt[0] << " cells with non-orthogonality > " << nonOrthWarn << " deg, "
+                      << cnt[1] << " with skewness > " << skewWarn << ", " << cnt[2] << " with face area ratio > "
+                      << aspectWarn << " -> " << out << "/badCells.csv\n";
+            std::filesystem::create_directories(out);
+            std::ofstream os(out + "/badCells.csv");
+            os << "cell,x,y,z,nonOrthogonality,skewness,aspectRatio\n" << std::setprecision(10);
+            for (std::size_t k = 0; k + 6 < all.size(); k += 7) {
+                os << glabel(all[k]);
+                for (int j = 1; j < 7; ++j) os << ',' << all[k + j];
+                os << '\n';
+            }
+        }
+        if (run.get("meshQuality", false)) {
+            vtk.add("nonOrthogonality", qNonOrth);
+            vtk.add("skewness", qSkew);
+            vtk.add("aspectRatio", qAspect);
+        }
+    }
+
+    // 场的时间平均（fieldAverage）：默认 U、p 及其二阶矩；start 之后累积（瞬态按 dt 加权，稳态按迭代计数）
+    std::unique_ptr<FieldAverage> favg;
+    scalar favgStart = 0;
+    int favgInterval = 1;
+    if (cfg.has("fieldAverage")) {
+        const Json& fa = cfg["fieldAverage"];
+        favg = std::make_unique<FieldAverage>(mesh);
+        favgStart = fa.get("start", 0.0);
+        favgInterval = std::max(fa.get("interval", 1), 1);
+        const bool p2 = fa.get("prime2Mean", true);
+        std::vector<std::string> names{"U", "p"};
+        if (fa.has("fields")) {
+            names.clear();
+            for (auto& n : fa["fields"].array()) names.push_back(n.string());
+        }
+        for (const auto& n : names) {
+            if (n == "U") {
+                favg->add("U", flow.U().internal(), p2);
+            } else if (n == "p") {
+                favg->add("p", flow.p().internal(), p2);
+            } else if (n == "nut" && turb) {
+                favg->add("nut", flow.nut(), false);
+            } else if (n == "T" && energy) {
+                favg->add("T", energy->T().internal(), p2);
+            } else {
+                bool found = false;
+                if (turb)
+                    for (auto* f : turb->fields())
+                        if (f->name() == n) {
+                            favg->add(n, f->internal(), p2);
+                            found = true;
+                        }
+                if (!found) throw std::runtime_error("fieldAverage: unknown field " + n);
+            }
+        }
+        favg->addTo(vtk);
+        if (!restartReadDir.empty() && favg->readRestart(restartReadDir) && par::master())
+            std::cout << "fieldAverage: resumed, averaged over " << favg->averagedTime() << '\n';
+    }
+
+    // 壁面 patch 输出：p、Cp、τ_w、Cf、y+（、q、T_w）→ wall_<patch>.csv 与 VTK 表面 surface_<patch>.pvd
+    std::unique_ptr<WallOutput> wallOut;
+    bool wallCsv = true, wallVtk = true, wallEveryWrite = false;
+    if (cfg.has("wallOutput")) {
+        const Json& wd = cfg["wallOutput"];
+        std::vector<std::string> names;
+        if (wd.has("patches"))
+            for (auto& n : wd["patches"].array()) names.push_back(n.string());
+        wallOut = std::make_unique<WallOutput>(flow, turb.get(), energy.get(), names);
+        wallOut->Uref = wd.get("Uref", 1.0);
+        wallOut->pRef = wd.get("pRef", 0.0);
+        wallOut->flowDir = wd.get("flowDir", Vec3{0, 0, 0});
+        wallCsv = wd.get("csv", true);
+        wallVtk = wd.get("vtk", true);
+        wallEveryWrite = wd.get("everyWrite", false);
+    }
+    auto writeWallFrame = [&](scalar t) {
+        if (!wallOut || !wallVtk || !wallEveryWrite) return;
+        wallOut->update();
+        wallOut->writeVtk(out, t);
+    };
+
+    // 平面采样（planes）：被平面切过的单元在投影点上的场值，结束时写 plane_<name>_<field>.csv
+    struct PlaneItem {
+        std::string name;
+        std::unique_ptr<CutPlane> plane;
+    };
+    std::vector<PlaneItem> planes;
+    if (cfg.has("planes"))
+        for (auto& pl : cfg["planes"].array()) {
+            PlaneItem it;
+            it.name = pl.get("name", "plane");
+            it.plane = std::make_unique<CutPlane>(mesh, pl["point"].vec3(), pl["normal"].vec3());
+            const glabel nc = it.plane->nCells();
+            if (par::master()) std::cout << "plane " << it.name << ": " << nc << " cells\n";
+            planes.push_back(std::move(it));
+        }
 
     std::unique_ptr<Monitor> monitor;
     if (cfg.has("monitor")) {
@@ -317,6 +450,8 @@ void runCase(const std::string& caseFile) {
                                                       w[0].number(), w[1].number());
         chStart = cd.get("start", 0.0);
         chFile = out + "/" + cd.get("file", std::string("channel_stats.csv"));
+        if (!restartReadDir.empty() && chStats->readRestart(restartReadDir) && par::master())
+            std::cout << "channelStatistics: resumed, averaged over " << chStats->averagedTime() << '\n';
     }
     // 展向均匀流动统计（周期山等，OpenLB periodichill3d 同格式）
     std::unique_ptr<SpanStatistics> spStats;
@@ -333,6 +468,8 @@ void runCase(const std::string& caseFile) {
         spDir = out + "/" + sd.get("dir", std::string("spanStatistics"));
         if (sd.has("stations"))
             for (auto& v : sd["stations"].array()) spStations.push_back(v.number());
+        if (!restartReadDir.empty() && spStats->readRestart(restartReadDir) && par::master())
+            std::cout << "spanStatistics: resumed, averaged over " << spStats->averagedTime() << '\n';
     }
     auto writeSpanStats = [&](bool report) {
         if (!spStats) return;
@@ -403,7 +540,51 @@ void runCase(const std::string& caseFile) {
             }
             if (energy)
                 for (auto* f : energy->fields()) line.writeTable(out + "/line_" + name + "_" + f->name() + ".csv", *f);
+            if (favg)
+                for (const auto& v : favg->views())
+                    line.writeTable(out + "/line_" + name + "_" + v.name + ".csv", v.data, v.nc, v.name);
         }
+    };
+    auto writePlanes = [&] {
+        for (const auto& pl : planes) {
+            const std::string pre = out + "/plane_" + pl.name + "_";
+            pl.plane->writeTable(pre + "U.csv", flow.U());
+            pl.plane->writeTable(pre + "p.csv", flow.p());
+            if (turb) {
+                for (auto* f : turb->fields()) pl.plane->writeTable(pre + f->name() + ".csv", *f);
+                pl.plane->writeTable(pre + "nut.csv", flow.nut().data(), 1, "nut");
+            }
+            if (energy)
+                for (auto* f : energy->fields()) pl.plane->writeTable(pre + f->name() + ".csv", *f);
+            if (favg)
+                for (const auto& v : favg->views()) pl.plane->writeTable(pre + v.name + ".csv", v.data, v.nc, v.name);
+        }
+    };
+    // 发散诊断：统计非有限值的单元并给出前几个单元中心，写出当前场的 VTK 帧便于定位，然后报错退出
+    auto reportDivergence = [&](const std::string& where) {
+        const auto& U = flow.U();
+        const auto& p = flow.p();
+        std::vector<double> rec;
+        label nBad = 0;
+        for (label c = 0; c < mesh->nCells(); ++c) {
+            if (std::isfinite(magSqr(U[c])) && std::isfinite(p[c])) continue;
+            ++nBad;
+            if (rec.size() < 5 * 4) {
+                const Vec3& x = mesh->C()[c];
+                rec.insert(rec.end(), {double(mesh->cellGlobal()[c]), x.x, x.y, x.z});
+            }
+        }
+        const glabel nb = par::allSum(glabel(nBad));
+        const auto all = par::gatherDoublesToMaster(rec);
+        if (par::master()) {
+            std::cerr << "diverged " << where << ": non-finite U/p in " << nb << " cells";
+            for (std::size_t k = 0; k + 3 < all.size() && k < 5 * 4; k += 4)
+                std::cerr << (k ? ", " : "; first at ") << "cell " << glabel(all[k]) << " (" << all[k + 1] << ' '
+                          << all[k + 2] << ' ' << all[k + 3] << ')';
+            std::cerr << '\n';
+        }
+        if (writeVtk) vtk.write(flow.time().time);
+        throw std::runtime_error("solution diverged (non-finite residual) " + where);
     };
 
     const double t0 = par::wallTime();
@@ -419,7 +600,8 @@ void runCase(const std::string& caseFile) {
             const scalar TRes = energy ? energy->correct() : 0.0;
             if (!std::isfinite(info.UInitialResidual) || !std::isfinite(info.pInitialResidual) ||
                 !std::isfinite(info.continuityError) || !std::isfinite(TRes))
-                throw std::runtime_error("solution diverged (non-finite residual) at iteration " + std::to_string(it));
+                reportDivergence("at iteration " + std::to_string(it));
+            if (favg && it >= favgStart && it % favgInterval == 0) favg->sample(1.0);
             const bool conv = it > 1 && info.UInitialResidual < tol && info.pInitialResidual < tol && TRes < tol;
             if (it == 1 || it % printInterval == 0 || conv) {
                 std::cout << "iter " << it << "  U res " << info.UInitialResidual << "  p res " << info.pInitialResidual
@@ -431,6 +613,7 @@ void runCase(const std::string& caseFile) {
             if (probes && it % probeInterval == 0) probes->sample(it);
             if (fm && (it % fm->interval == 0 || conv)) sampleForces(it, 0.0, true);
             if (writeVtk && writeInterval > 0 && it % writeInterval == 0) vtk.write(it);
+            if (writeInterval > 0 && it % writeInterval == 0) writeWallFrame(it);
             if (conv) break;
         }
         std::cout << "finished after " << std::min(it, maxIter) << " iterations, " << par::wallTime() - t0 << " s\n";
@@ -474,8 +657,9 @@ void runCase(const std::string& caseFile) {
             if (energy) energy->correct();
             ++n;
             if (!std::isfinite(info.maxCo) || !std::isfinite(info.continuityError))
-                throw std::runtime_error("solution diverged (non-finite Courant number / continuity error) at t = " +
-                                         std::to_string(flow.time().time));
+                reportDivergence("at t = " + std::to_string(flow.time().time));
+            if (favg && flow.time().time >= favgStart * (1 - 1e-12) && n % favgInterval == 0)
+                favg->sample(dt * favgInterval);
             if (n % printInterval == 0)
                 std::cout << "t " << flow.time().time << "  dt " << dt << "  Co " << info.maxCo << "  cont "
                           << info.continuityError << '\n';
@@ -491,6 +675,7 @@ void runCase(const std::string& caseFile) {
             if (spStats && flow.time().time >= spStart * (1 - 1e-12)) spStats->sample(dt);
             if (flow.time().time >= nextWrite * (1 - 1e-12)) {
                 if (writeVtk) vtk.write(flow.time().time);
+                writeWallFrame(flow.time().time);
                 if (chStats) chStats->write(chFile);
                 writeSpanStats(true);
                 nextWrite += writeInterval;
@@ -501,6 +686,7 @@ void runCase(const std::string& caseFile) {
     }
     printFluxes();
     writeLines();
+    writePlanes();
     writeSpanStats(true);
     if (chStats) {
         chStats->write(chFile);
@@ -521,17 +707,32 @@ void runCase(const std::string& caseFile) {
         energy->printWallHeatFlux(std::cout);
         energy->writeWallHeatFlux(out);
     }
+    if (wallOut) {
+        wallOut->update();
+        if (wallCsv) wallOut->writeCsv(out);
+        if (wallVtk) wallOut->writeVtk(out, flow.time().time);
+    }
+    if (favg && par::master())
+        std::cout << "fieldAverage: averaged over " << favg->averagedTime() << " (" << favg->nSamples() << " samples)\n";
     if (run.get("tecplot", false)) {
         TecplotWriter tp(mesh);
         tp.add(flow.U());
         tp.add(flow.p());
+        if (turb) {
+            for (auto* f : turb->fields()) tp.add(*f);
+            tp.add("nut", flow.nut(), 1);
+        }
         if (energy) tp.add(energy->T());
+        if (favg) favg->addTo(tp);
         tp.write(out + "/fields.dat", "U_p");
     }
     if (!restartDir.empty()) {
         restart::write(restartDir, flow);
         if (turb) turb->writeRestart(restartDir);
         if (energy) energy->writeRestart(restartDir);
+        if (favg) favg->writeRestart(restartDir);
+        if (chStats) chStats->writeRestart(restartDir);
+        if (spStats) spStats->writeRestart(restartDir);
     }
     if (turb) turb->printYPlus(std::cout);
     if (flow.forcing.mode == MomentumForcing::Mode::MeanVelocity) std::cout << "forcing gradP " << flow.forcing.gradP << '\n';

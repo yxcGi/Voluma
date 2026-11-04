@@ -26,6 +26,9 @@ public:
     void write(const std::string& file) const;
     scalar averagedTime() const { return time_; }
     scalar uTau() const;
+    // 续算：累积量（全局归约后由 0 号写 channelStatistics.bin）；读入时 0 号持有全部累积量，其余进程清零，换进程数也可续
+    void writeRestart(const std::string& dir) const;
+    bool readRestart(const std::string& dir);
 
 private:
     const IncompressibleFlow& flow_;

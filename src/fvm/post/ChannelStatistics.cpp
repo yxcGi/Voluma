@@ -100,6 +100,41 @@ void ChannelStatistics::sample(scalar dt) {
 
 scalar ChannelStatistics::uTau() const { return time_ > 0 ? std::sqrt(tauAcc_ / time_) : 0.0; }
 
+void ChannelStatistics::writeRestart(const std::string& dir) const {
+    std::vector<double> g = acc_;
+    par::allSumInPlace(g.data(), int(g.size()));
+    if (!par::master()) return;
+    std::filesystem::create_directories(dir);
+    std::ofstream os(dir + "/channelStatistics.bin", std::ios::binary);
+    const std::uint64_t n = g.size();
+    const double hdr[2] = {time_, tauAcc_};
+    os.write(reinterpret_cast<const char*>(&n), sizeof(n));
+    os.write(reinterpret_cast<const char*>(hdr), sizeof(hdr));
+    os.write(reinterpret_cast<const char*>(g.data()), std::streamsize(sizeof(double) * n));
+}
+
+bool ChannelStatistics::readRestart(const std::string& dir) {
+    double hdr[3] = {0, 0, 0};  // ok, time, tauAcc
+    std::vector<double> g;
+    if (par::master()) {
+        std::ifstream is(dir + "/channelStatistics.bin", std::ios::binary);
+        std::uint64_t n = 0;
+        if (is && is.read(reinterpret_cast<char*>(&n), sizeof(n)) && n == acc_.size()) {
+            is.read(reinterpret_cast<char*>(hdr + 1), 2 * sizeof(double));
+            g.resize(n);
+            is.read(reinterpret_cast<char*>(g.data()), std::streamsize(sizeof(double) * n));
+            hdr[0] = is ? 1.0 : 0.0;
+        }
+    }
+    par::broadcast(hdr, 3);
+    if (hdr[0] < 0.5) return false;
+    time_ = hdr[1];
+    tauAcc_ = hdr[2];
+    std::fill(acc_.begin(), acc_.end(), 0.0);
+    if (par::master()) acc_ = g;
+    return true;
+}
+
 void ChannelStatistics::write(const std::string& file) const {
     std::vector<double> g = acc_;
     par::allSumInPlace(g.data(), int(g.size()));

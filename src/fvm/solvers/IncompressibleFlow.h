@@ -107,6 +107,9 @@ public:
     // 把当前速度场投影成无散场（解一次 ∇²φ = ∇·φ_f，φ_f −= ∇φ·S，U −= ∇φ；φ 用 p 的边界条件，p 本身不变）。
     // 用于稳态求解前的初场处理：曲面域内的均匀初场散度很大，SIMPLE 第一步可能发散（与 OpenFOAM potentialFoam 同效）
     void projectDivergenceFree(int nNonOrthCorr = 2);
+    // Bernoulli 压力：p = H − ½|U|²，H 取定值压力边界上 (p_b + ½|U_b|²) 的面积平均（没有定值压力边界时为 0）；返回 H。
+    // 与 projectDivergenceFree 合用即混合初始化（势流速度 + Bernoulli 压力）
+    scalar setBernoulliPressure();
 
     // 重启用：通量旧时间层
     std::vector<scalar>& phiOld() { return phiOld_; }

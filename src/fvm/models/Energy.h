@@ -44,6 +44,8 @@ public:
     };
     // 各壁面 patch 的热流汇总（全局归约；进入流体为正）
     std::vector<PatchHeat> wallHeatFlux() const;
+    // 各边界面的热流（下标 f − nInternalFaces；进入流体为正；非壁面为 0）
+    std::vector<scalar> heatFluxBoundaryFaces() const;
     void printWallHeatFlux(std::ostream& os) const;
     void writeWallHeatFlux(const std::string& dir) const;
 

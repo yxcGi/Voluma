@@ -132,6 +132,8 @@ void sendBytes(const std::vector<char>& buf, int dest, int tag);
 std::vector<char> recvBytes(int source, int tag);
 void broadcastBytes(std::vector<char>& buf, int root = 0);
 void broadcast(double* v, int n, int root = 0);
+// 变长数组收集：各进程的 local 按进程号顺序拼接到 0 号进程（其他进程返回空）
+std::vector<double> gatherDoublesToMaster(const std::vector<double>& local);
 void broadcast(glabel* v, int n, int root = 0);
 
 // ---------------------------------------------------------- 打包工具

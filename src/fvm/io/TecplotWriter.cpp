@@ -148,7 +148,10 @@ void TecplotWriter::write(const std::string& file, const std::string& title) con
     static const char* cmp[3] = {"x", "y", "z"};
     for (const auto& it : items_)
         for (int k = 0; k < it.nc; ++k)
-            os << ",\"" << it.name << (it.nc == 3 ? std::string("_") + cmp[k] : (it.nc > 1 ? std::to_string(k) : "")) << '"';
+            os << ",\"" << it.name
+               << (it.nc == 3 ? std::string("_") + cmp[k]
+                              : (it.nc == 9 ? std::string("_") + cmp[k / 3] + cmp[k % 3] : (it.nc > 1 ? std::to_string(k) : "")))
+               << '"';
     os << "\nZONE T=\"" << title << "\",N=" << nP << ",E=" << nE
        << ",ZONETYPE=" << (twoD ? "FEQUADRILATERAL" : "FEBRICK") << "\nDATAPACKING=BLOCK\n";
     os << "VARLOCATION=([1-" << nd << "]=NODAL";

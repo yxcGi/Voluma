@@ -97,6 +97,7 @@ struct GlobalComp {
     std::vector<scalar> V;
     std::vector<glabel> own, nei;
     std::vector<Vec3> Sf, Cf, d;
+    std::vector<glabel> rawFace;  // 计算面 → 原始面（周期面取 A 侧）
     glabel nInternal = 0;
     std::vector<CompPatch> patches;
     std::vector<std::string> emptyNames;
@@ -240,6 +241,7 @@ GlobalComp buildGlobal(const RawMesh& m) {
         g.Sf.push_back(Sf[f]);
         g.Cf.push_back(Cf[f]);
         g.d.push_back(g.C[m.neighbour[f]] - g.C[m.owner[f]]);
+        g.rawFace.push_back(f);
     }
     // 周期面并入内部面
     std::vector<bool> done(m.patches.size(), false);
@@ -294,6 +296,7 @@ GlobalComp buildGlobal(const RawMesh& m) {
             g.Sf.push_back(Sf[fa]);
             g.Cf.push_back(Cf[fa]);
             g.d.push_back(g.C[n] + (Cf[fa] - Cf[best]) - g.C[o]);
+            g.rawFace.push_back(fa);
         }
     }
     g.nInternal = glabel(g.own.size());
@@ -317,6 +320,7 @@ GlobalComp buildGlobal(const RawMesh& m) {
             g.Sf.push_back(Sf[f]);
             g.Cf.push_back(Cf[f]);
             g.d.push_back(Cf[f] - g.C[m.owner[f]]);
+            g.rawFace.push_back(f);
         }
         g.patches.push_back(cp);
     }
@@ -437,6 +441,21 @@ std::vector<char> packRank(const GlobalComp& g, const RawMesh& m, const std::vec
             foff.push_back(-1);
         }
     }
+    // 边界面的点（外法向绕向；点不在单元形状点集中时补入）
+    std::vector<std::int64_t> bconn, boff{0};
+    for (std::size_t k = std::size_t(nInt); k < faces.size(); ++k) {
+        const glabel rf = g.rawFace[faces[k]];
+        for (glabel q = m.faceOffsets[rf]; q < m.faceOffsets[rf + 1]; ++q) {
+            const glabel p = m.facePoints[q];
+            auto it = ploc.find(p);
+            if (it == ploc.end()) {
+                it = ploc.emplace(p, std::int64_t(pts.size())).first;
+                pts.push_back(m.points[p]);
+            }
+            bconn.push_back(it->second);
+        }
+        boff.push_back(std::int64_t(bconn.size()));
+    }
     pk.putVec(pts);
     pk.putVec(conn);
     pk.putVec(off);
@@ -444,6 +463,8 @@ std::vector<char> packRank(const GlobalComp& g, const RawMesh& m, const std::vec
     pk.put<int>(hasPoly ? 1 : 0);
     pk.putVec(fcs);
     pk.putVec(foff);
+    pk.putVec(bconn);
+    pk.putVec(boff);
     (void)part;
     (void)r;
     return std::move(pk.buf);
@@ -564,6 +585,8 @@ std::shared_ptr<Mesh> Mesh::build(const RawMesh* raw) {
     M.vtk_.hasPolyhedra = u.get<int>() != 0;
     M.vtk_.faces = u.getVec<std::int64_t>();
     M.vtk_.faceOffsets = u.getVec<std::int64_t>();
+    M.vtk_.bFaceConn = u.getVec<std::int64_t>();
+    M.vtk_.bFaceOff = u.getVec<std::int64_t>();
 
     M.cellOrdering_.setup(M.nCells_, M.nGlobalCells_, std::move(cellPos));
     for (std::size_t p = 0; p < M.patches_.size(); ++p)
@@ -676,6 +699,40 @@ scalar Mesh::meanSkewness() const {
 }
 
 scalar Mesh::maxSkewness() const { return par::allMax(skewMax_); }
+
+std::vector<scalar> Mesh::cellNonOrthogonality() const {
+    std::vector<scalar> q(nCells_, 0.0);
+    for (label f = 0; f < nInternalFaces_; ++f) {
+        const scalar c = dot(Sf_[f], d_[f]) / (magSf_[f] * mag(d_[f]));
+        const scalar a = std::acos(std::clamp(c, -1.0, 1.0)) * 180.0 / PI;
+        if (owner_[f] < nCells_) q[owner_[f]] = std::max(q[owner_[f]], a);
+        if (neighbour_[f] < nCells_) q[neighbour_[f]] = std::max(q[neighbour_[f]], a);
+    }
+    return q;
+}
+
+std::vector<scalar> Mesh::cellSkewness() const {
+    std::vector<scalar> q(nCells_, 0.0);
+    for (label f = 0; f < nInternalFaces_; ++f) {
+        const scalar sk = mag(skew_[f]) / mag(d_[f]);
+        if (owner_[f] < nCells_) q[owner_[f]] = std::max(q[owner_[f]], sk);
+        if (neighbour_[f] < nCells_) q[neighbour_[f]] = std::max(q[neighbour_[f]], sk);
+    }
+    return q;
+}
+
+std::vector<scalar> Mesh::cellAspectRatio() const {
+    std::vector<scalar> q(nCells_, 1.0);
+    for (label c = 0; c < nCells_; ++c) {
+        scalar mx = 0, mn = GREAT;
+        for (label k = cfOff_[c]; k < cfOff_[c + 1]; ++k) {
+            mx = std::max(mx, magSf_[cfList_[k]]);
+            mn = std::min(mn, magSf_[cfList_[k]]);
+        }
+        q[c] = mn > 0 ? mx / mn : GREAT;
+    }
+    return q;
+}
 
 bool Mesh::isEmptyPatch(const std::string& name) const {
     return std::find(emptyPatches_.begin(), emptyPatches_.end(), name) != emptyPatches_.end();

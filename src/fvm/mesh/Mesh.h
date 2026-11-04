@@ -42,6 +42,8 @@ struct VtkPiece {
     std::vector<std::uint8_t> types;
     std::vector<std::int64_t> faces, faceOffsets;  // 仅 VTK_POLYHEDRON 使用（其余单元 faceOffsets=-1）
     bool hasPolyhedra = false;
+    // 边界面的点（CSR，按局部边界面顺序 f − nInternalFaces，点号为 points 的下标，外法向绕向）：patch 表面输出用
+    std::vector<std::int64_t> bFaceConn, bFaceOff{0};
 };
 
 class Mesh {
@@ -107,6 +109,10 @@ public:
     const std::vector<label>& cellFaces() const { return cfList_; }
 
     void printSummary() const;
+    // 单元质量（自有单元）：所含内部面的最大非正交角（度）、最大面偏斜度、面积比 max|S_f|/min|S_f|（二维不含 empty 面）
+    std::vector<scalar> cellNonOrthogonality() const;
+    std::vector<scalar> cellSkewness() const;
+    std::vector<scalar> cellAspectRatio() const;
 
     // 依附于网格的派生数据缓存（如预条件器面顺序、多重网格层级），随网格一起释放
     template <class T, class Build> const T& cached(const std::string& key, Build&& build) const {

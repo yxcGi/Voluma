@@ -40,8 +40,14 @@ public:
     const std::vector<scalar>& nut() const { return flow_.nut(); }
     // 各壁面面的 y+（与壁面单元中心，最近一次 correct）
     std::vector<scalar> yPlusWall() const;
-    // 打印壁面 y+ 统计（以及 ν_t 限制器作用的单元数）
+    // 各边界面的 y+（下标 f − nInternalFaces；非壁面为 −1）
+    std::vector<scalar> yPlusBoundaryFaces() const;
+    // 打印壁面 y+ 统计（以及 ν_t 限制器、有界化作用的单元数）
     void printYPlus(std::ostream& os) const;
+    // 混合初始化：没有在 initial 中给出初值的模型场取入流面（φ < 0 的非壁面边界）边界值的面积加权平均
+    void initializeFromInlets();
+    // 最近一次 correct 中各场被 bound() 修正的单元数（全局）
+    const std::map<std::string, glabel>& boundedCells() const { return nBounded_; }
     // 续算：模型场及旧时间层（与 restart::write/read 同目录）
     void writeRestart(const std::string& dir);
     void readRestart(const std::string& dir);
@@ -58,6 +64,7 @@ protected:
     void solveTransport(ScalarField& psi, const std::vector<scalar>& gammaCell, const std::vector<scalar>& Sp,
                         const std::vector<scalar>& Su, const std::vector<label>& fixCells = {},
                         const std::vector<scalar>& fixValues = {});
+    // 有界化（OpenFOAM bound 同法）：低于下限（或非有限）的单元取相邻单元有效值的平均，不足则取下限；统计单元数
     void bound(ScalarField& f, scalar minValue);
     scalar coeff(const std::string& name, scalar def);
 
@@ -90,6 +97,7 @@ protected:
     // ν_t/ν 上限（Fluent 的 turbulent viscosity ratio limit，默认 1e5）：防止 ε/ω → 0 时 ν_t 溢出；nLimited_ 为被限制的单元数
     scalar nutMaxRatio_ = 1e5;
     label nLimited_ = 0;
+    std::map<std::string, glabel> nBounded_;
 
     // 近壁常数
     scalar kappa_ = 0.41, E_ = 9.8, Cmu_ = 0.09;

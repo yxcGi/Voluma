@@ -261,6 +261,18 @@ void EnergyModel::printWallHeatFlux(std::ostream& os) const {
     }
 }
 
+std::vector<scalar> EnergyModel::heatFluxBoundaryFaces() const {
+    const auto gf = gammaFacesLast_.empty() ? gammaFaces() : gammaFacesLast_;
+    const label nI = m_.nInternalFaces();
+    std::vector<scalar> q(m_.nBoundaryFaces(), 0.0);
+    for (label p = 0; p < label(m_.patches().size()); ++p) {
+        if (!isWallPatch_[p]) continue;
+        const Patch& pt = m_.patches()[p];
+        for (label f = pt.start; f < pt.end(); ++f) q[f - nI] = faceHeatFlux(f - nI, gf);
+    }
+    return q;
+}
+
 void EnergyModel::writeWallHeatFlux(const std::string& dir) const {
     const auto gf = gammaFacesLast_.empty() ? gammaFaces() : gammaFacesLast_;
     const label nI = m_.nInternalFaces();

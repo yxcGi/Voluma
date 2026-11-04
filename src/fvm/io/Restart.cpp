@@ -76,6 +76,11 @@ bool readCellArray(const std::string& file, const Mesh& m, double* data, int nc)
         std::vector<B3> gb(par::master() ? g.size() / 3 : 0);
         if (par::master()) std::memcpy(static_cast<void*>(gb.data()), g.data(), g.size() * sizeof(double));
         ord.scatter(gb, reinterpret_cast<B3*>(tmp.data()));
+    } else if (nc == 9) {
+        struct B9 { double v[9]; };
+        std::vector<B9> gb(par::master() ? g.size() / 9 : 0);
+        if (par::master()) std::memcpy(static_cast<void*>(gb.data()), g.data(), g.size() * sizeof(double));
+        ord.scatter(gb, reinterpret_cast<B9*>(tmp.data()));
     } else {
         throw std::runtime_error("readCellArray: unsupported component count");
     }

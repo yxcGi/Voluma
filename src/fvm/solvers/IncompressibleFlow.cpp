@@ -69,8 +69,10 @@ void IncompressibleFlow::projectDivergenceFree(int nNonOrthCorr) {
             for (label f = 0; f < m.nFaces(); ++f) phi_[f] -= F[f];
         }
     }
-    const auto gp = fvc::grad(p_, gradScheme);
-    for (label c = 0; c < nT; ++c) U_[c] -= gp[c];
+    // 单元速度由修正后的面通量重构（potentialFoam 同法）：U −= ∇φ 在零梯度边界（入口）单元上的 Gauss 梯度只有一半，
+    // 会留下与面通量不一致的单元速度
+    const auto Ur = fvc::reconstruct(m, phi_);
+    for (label c = 0; c < nT; ++c) U_[c] = Ur[c];
     if (m.twoD())
         for (label c = 0; c < nT; ++c) U_[c][m.emptyDir()] = 0.0;
     U_.correctBoundaryConditions();
@@ -368,6 +370,26 @@ StepInfo IncompressibleFlow::step(scalar dt) {
     info.continuityError = par::allMax(ce);
     info.maxCo = steady ? 0.0 : courantNumber(dt);
     return info;
+}
+
+
+scalar IncompressibleFlow::setBernoulliPressure() {
+    const Mesh& m = *mesh_;
+    par::SumAcc s[2];
+    for (label pi = 0; pi < label(m.patches().size()); ++pi) {
+        const Patch& pt = m.patches()[pi];
+        if (!p_.hasBC(pi) || !p_.bc(pi).fixesValue()) continue;
+        for (label f = pt.start; f < pt.end(); ++f) {
+            s[0].add((p_.bValue(f) + 0.5 * magSqr(U_.bValue(f))) * m.magSf()[f]);
+            s[1].add(m.magSf()[f]);
+        }
+    }
+    double r[2];
+    par::SumAcc::allReduce(s, 2, r);
+    const scalar H = r[1] > 0 ? r[0] / r[1] : 0.0;
+    for (label c = 0; c < m.nTotalCells(); ++c) p_.internal()[c] = H - 0.5 * magSqr(U_[c]);
+    p_.correctBoundaryConditions();
+    return H;
 }
 
 } // namespace cfd

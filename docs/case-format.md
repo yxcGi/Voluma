@@ -151,8 +151,13 @@ k = 1.5 (I\|U_b\|)²；ε = Cμ^{3/4} k^{3/2}/L 或 Cμ k²/(r ν)；ω = √k/(
 
 `"noise": 0.02` 在速度初场上叠加该幅值的随机扰动（与进程数无关），用于打破对称、触发脱落或转捩。
 
-`"potentialFlow": true` 在求解前把初场投影成无散场（解一次泊松方程修正速度与通量，p 不变，同 OpenFOAM potentialFoam）；
-曲面或周期域里给均匀初速度时建议打开，否则稳态 SIMPLE 的第一步可能发散。
+`"potentialFlow": true` 在求解前把初场投影成无散场（解一次泊松方程修正通量，单元速度由修正后的面通量重构，p 不变，
+同 OpenFOAM potentialFoam）；曲面或周期域里给均匀初速度时建议打开，否则稳态 SIMPLE 的第一步可能发散。
+
+`"hybrid": true` 为混合初始化（与 Fluent hybrid initialization 同效）：先做上述势流投影（入口 / 出口通量按边界条件给出，
+壁面无穿透），再按 Bernoulli 给压力 p = H − ½|U|²（H 取定值压力边界上 p_b + ½|U_b|² 的面积平均，没有定值压力边界时为 0），
+湍流量中没有在 `initial` 里给初值的场取入流边界值（湍流入口条件给出的 k、ε、ω 等）的面积加权平均。
+直通道里给出精确的均匀速度与零压力（`tests/test_post`）；对圆柱 Re 40 这类均匀初场已经很好的算例收敛步数不变（1200 对 1134）。
 
 槽道 LES 可用 `"channel"` 生成发展湍流用的初场（1/7 次方律平均剖面，体平均为 Ubulk，叠加无散的流向涡与条带扰动
 和小幅随机扰动；随机数由单元坐标散列得到，与进程数无关）：
@@ -216,8 +221,14 @@ p 的归一化因子取当前值与前 5 步最大值中的较大者（压力恒
 | `printInterval` | 打印间隔（步） | 同左 |
 | `output` | 输出目录，默认 `output` | |
 | `vtk` / `tecplot` | 是否写 VTK（默认是）/ Tecplot `.dat`（默认否） | |
-| `restartWrite` `restartRead` | 续算文件目录（与进程数无关，可换进程数续算） | |
+| `restartWrite` `restartRead` | 续算文件目录（与进程数无关，可换进程数续算；时间平均、槽道 / 展向统计的累积量一并写入 / 读回） | |
 | `printFluxes` | 打印时同时列出各边界体积通量（结束时总会列出） | |
+| `meshQuality` | 把单元质量量（`nonOrthogonality` 所含内部面的最大非正交角、`skewness` 最大面偏斜度、`aspectRatio` 面积比 max\|S_f\|/min\|S_f\|）写进 VTK | |
+| `nonOrthWarn` `skewWarn` `aspectWarn` | 坏单元阈值（默认 70°、1、1000）：启动时统计超过阈值的单元数并写 `output/badCells.csv`（全局单元号、中心、三个量） | |
+
+残差 / 库朗数 / 连续性误差出现非有限值时求解器不会静默退出：打印非有限 U、p 的单元数与前几个单元的全局号和中心坐标，
+写出当前场的 VTK 帧（便于在 ParaView 里定位发散起点），再以错误退出。湍流量的有界化（k、ε、ω 低于下限或非有限时取相邻有效单元
+的平均，与 OpenFOAM `bound()` 同法）会在打印 y+ 的同时报告被修正的单元数（`turbulence: bounding k in N cells`）。
 
 ## monitor（仅 fvmFlow，瞬态）
 
@@ -237,6 +248,40 @@ epsilon_sgs = 2⟨ν_t S:S⟩，enstrophy = ½⟨|ω|²⟩。总耗散 −dk/dt 
 
 探针取所在单元（最近体心）的值，结果与进程数无关。沿线采样默认也取单元值（表中坐标为单元体心）；
 加 `"interpolate": true` 则用单元梯度线性重构到采样点 φ_c + ∇φ_c·(x − x_c)，表中坐标为采样点本身，非结构网格上建议开启。
+沿线采样写出 U、p、湍流场、ν_t、T 以及时间平均场（见 fieldAverage）。
+
+## planes（仅 fvmFlow）
+
+```jsonc
+"planes": [ { "name": "midZ", "point": [0, 0, 0.5], "normal": [0, 0, 1] } ]
+```
+
+结束时对每个平面写 `output/plane_<name>_<field>.csv`（`x,y,z,值`）：取被平面切过的单元（按单元顶点到平面的有符号距离判定，
+平面恰落在网格面上时只取一侧的一层），在单元中心到平面的投影点上用单元梯度线性重构给出场值（时间平均场取单元值），
+按全局单元编号排序，结果与进程数无关。ParaView 中可用 Table To Points + Delaunay2D 显示。
+
+## fieldAverage（仅 fvmFlow）
+
+```jsonc
+"fieldAverage": { "start": 100, "fields": ["U", "p", "T", "k", "nut"], "prime2Mean": true, "interval": 1 }
+```
+
+从 `start`（瞬态为时间，稳态为迭代步）起累积时间平均（瞬态按 dt 加权，稳态按迭代计数）：`<name>Mean` 与二阶矩
+`<name>Prime2Mean` = ⟨φφ⟩ − ⟨φ⟩⟨φ⟩（向量场为 3×3 对称张量，即解析雷诺应力；`prime2Mean: false` 关闭），与 OpenFOAM fieldAverage
+的 Mean / Prime2Mean 同义。默认场为 U、p；可选湍流模型场、`nut`、`T`。平均场随 VTK 各帧一起写出，也进 Tecplot、沿线 / 平面采样；
+续算时累积量写入 / 读回续算目录（可换进程数），分段运行的平均与一次跑完逐位一致。
+
+## wallOutput（仅 fvmFlow）
+
+```jsonc
+"wallOutput": { "patches": ["cylinder"], "Uref": 1, "pRef": 0, "flowDir": [1, 0, 0], "csv": true, "vtk": true, "everyWrite": false }
+```
+
+对所选壁面 patch（缺省为全部壁面）输出每个面的 p、Cp = (p − pRef)/(½U_ref²)、壁面切应力 τ_w（运动学 τ/ρ，壁面函数网格上含模型给出的
+ν_eff,w）、Cf = τ_w·t/(½U_ref²)（给 `flowDir` 时取沿它的投影，否则取 \|τ_w\|）、y+（湍流模型的壁面单元 y+，层流为 y√\|τ_w\|/ν），
+有能量方程时还有热流 q 与壁温 T_w：结束时写 `output/wall_<patch>.csv`（按全局面序）与 VTK 表面 `output/surface_<patch>.pvd`
+（PolyData，每个进程一个分块），`everyWrite: true` 时每个 VTK 写出时刻也写一帧表面。圆柱 Re 40 上由 Cf 变号得到的分离角与
+`forces` 的 surface.csv 逐位一致（53.65°，文献 53.6–53.7°）。
 
 ## forces（仅 fvmFlow）
 
@@ -256,6 +301,8 @@ epsilon_sgs = 2⟨ν_t S:S⟩，enstrophy = ½⟨|ω|²⟩。总耗散 −dk/dt 
 并写 `output/surface.csv`（壁面面心坐标、法向、Cp、壁面切应力、Cf）。Cp = (p − pRef)/(½U²)，Cf 为切应力沿 dragDir 的分量 /(½U²)。
 
 ## channelStatistics（仅 fvmFlow）
+
+累积量随续算写入 / 读回（`restartWrite` / `restartRead`），分段运行可以继续累积；spanStatistics 同。
 
 槽道湍流统计，输出格式与 OpenLB `channel3d` 算例相同，可直接与其结果及 Lee & Moser DNS 对比：
 

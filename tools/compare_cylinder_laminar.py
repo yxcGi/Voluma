@@ -57,9 +57,27 @@ def main():
             k = j[0]
             ths = thu[k] + (0 - tu[k]) * (thu[k + 1] - thu[k]) / (tu[k + 1] - tu[k])
             print(f"separation angle from rear stagnation point {ths:.1f} deg   (reference 53.6-53.7)")
+        # wallOutput 的 wall_cylinder.csv（有则同法求分离角，应与 surface.csv 一致）
+        wallOk = True
+        wf = os.path.join(a.out, 'wall_cylinder.csv')
+        if os.path.exists(wf) and len(j):
+            Wl = read_csv(wf)
+            thw = np.degrees(np.arctan2(Wl['y'], Wl['x']))
+            tw = Wl['tau_x'] * (-np.sin(np.radians(thw))) + Wl['tau_y'] * np.cos(np.radians(thw))
+            up = thw > 0
+            ow = np.argsort(thw[up])
+            thwu, twu = thw[up][ow], tw[up][ow]
+            jw = np.where(np.sign(twu[:-1]) != np.sign(twu[1:]))[0]
+            if len(jw):
+                kw = jw[0]
+                thsw = thwu[kw] + (0 - twu[kw]) * (thwu[kw + 1] - thwu[kw]) / (twu[kw + 1] - twu[kw])
+                print(f"wallOutput: separation angle {thsw:.2f} deg, max y+ {np.max(Wl['yPlus']):.3f}, Cp front {np.max(Wl['Cp']):.4f}")
+                wallOk = abs(thsw - ths) < 0.05
+            else:
+                wallOk = False
         if a.check:
-            ok = 1.49 <= F['Cd'][-1] <= 1.56 and len(i) and 2.1 <= xz - 0.5 <= 2.4 and len(j) and 51 <= ths <= 56
-            print('PASS' if ok else 'FAIL: outside Cd 1.49-1.56, L_w 2.1-2.4, theta 51-56')
+            ok = 1.49 <= F['Cd'][-1] <= 1.56 and len(i) and 2.1 <= xz - 0.5 <= 2.4 and len(j) and 51 <= ths <= 56 and wallOk
+            print('PASS' if ok else 'FAIL: outside Cd 1.49-1.56, L_w 2.1-2.4, theta 51-56 (or wallOutput inconsistent)')
             if not ok:
                 raise SystemExit(1)
     else:

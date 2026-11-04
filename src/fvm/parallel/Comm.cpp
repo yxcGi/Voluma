@@ -1,5 +1,7 @@
 #include "fvm/parallel/Comm.h"
 
+#include <cstring>
+
 #include <chrono>
 #include <cstdlib>
 #include <exception>
@@ -438,6 +440,24 @@ std::vector<double> GlobalOrdering::scatterDoubles(const std::vector<double>& gl
 #else
     return global;
 #endif
+}
+
+
+std::vector<double> gatherDoublesToMaster(const std::vector<double>& local) {
+    if (master()) {
+        std::vector<double> all(local);
+        for (int src = 1; src < size(); ++src) {
+            const auto buf = recvBytes(src, 450);
+            const std::size_t n0 = all.size();
+            all.resize(n0 + buf.size() / sizeof(double));
+            if (!buf.empty()) std::memcpy(all.data() + n0, buf.data(), buf.size());
+        }
+        return all;
+    }
+    std::vector<char> buf(local.size() * sizeof(double));
+    if (!buf.empty()) std::memcpy(buf.data(), local.data(), buf.size());
+    sendBytes(buf, 0, 450);
+    return {};
 }
 
 } // namespace cfd::par

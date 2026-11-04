@@ -63,6 +63,9 @@ mpirun -np 8 ./build/bin/fvmFlow cases/pitzDaily/case.json
 }
 ```
 
+长算例分段续算：`tools/run_chunked.py <case.json> --workdir runs/x --np 8 --chunk 100`（中断后重跑同一命令即可续上，
+统计量随续算累积）；需要在大机器上跑的算例清单见 `docs/local_runs.md`。
+
 ## 算例
 
 | 目录 | 程序 | 内容 |
@@ -147,6 +150,8 @@ cases/  meshes/    算例与网格
 4. ✅ 壁面模型 WMLES：Spalding、Musker、Reichardt、对数律、幂律、一维薄层方程（可含压力梯度），可调采样高度；Re_τ=1000 槽道
 5. ✅ RANS：k-ε（标准 / RNG / realizable）、k-ω、k-ω SST、BSL-EARSM、LRR / SSG 雷诺应力模型、Spalart-Allmaras；标准壁面函数与全 y+ 壁面处理；周期山、圆柱绕流等
 6. 通用化：✅ 三维四面体网格验证；✅ 传热（能量方程、Boussinesq 浮力、热壁面函数、壁面热流 / Nu 输出）；GPU
+7. ✅ 后处理与鲁棒性：场的时间平均（Mean / Prime2Mean，续算可累积）、壁面 patch 输出（Cp / Cf / τ_w / y+ / 热流，CSV + VTK 表面）、
+   平面采样、混合初始化（势流 + Bernoulli + 入口湍流量）、k / ε / ω 有界化报告、坏单元报告与发散诊断
 
 已知限制：TVD 类格式（MUSCL 等）在个别算例上会让 SIMPLE 残差停在 1e-4 左右（限制器反复切换），此时可改用 linearUpwind；
 瞬态大步长（扩散数远大于 1）时 PISO 可能不稳定，需要增大 `nOuter` 或限制步长。

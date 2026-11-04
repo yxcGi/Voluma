@@ -135,6 +135,47 @@ void SpanStatistics::sample(scalar dt) {
     time_ += dt;
 }
 
+void SpanStatistics::writeRestart(const std::string& dir) const {
+    std::vector<double> g = acc_, wg = wacc_;
+    par::allSumInPlace(g.data(), int(g.size()));
+    par::allSumInPlace(wg.data(), int(wg.size()));
+    if (!par::master()) return;
+    std::filesystem::create_directories(dir);
+    std::ofstream os(dir + "/spanStatistics.bin", std::ios::binary);
+    const std::uint64_t n[2] = {g.size(), wg.size()};
+    os.write(reinterpret_cast<const char*>(n), sizeof(n));
+    os.write(reinterpret_cast<const char*>(&time_), sizeof(double));
+    os.write(reinterpret_cast<const char*>(g.data()), std::streamsize(sizeof(double) * n[0]));
+    os.write(reinterpret_cast<const char*>(wg.data()), std::streamsize(sizeof(double) * n[1]));
+}
+
+bool SpanStatistics::readRestart(const std::string& dir) {
+    double hdr[2] = {0, 0};  // ok, time
+    std::vector<double> g, wg;
+    if (par::master()) {
+        std::ifstream is(dir + "/spanStatistics.bin", std::ios::binary);
+        std::uint64_t n[2] = {0, 0};
+        if (is && is.read(reinterpret_cast<char*>(n), sizeof(n)) && n[0] == acc_.size() && n[1] == wacc_.size()) {
+            is.read(reinterpret_cast<char*>(hdr + 1), sizeof(double));
+            g.resize(n[0]);
+            wg.resize(n[1]);
+            is.read(reinterpret_cast<char*>(g.data()), std::streamsize(sizeof(double) * n[0]));
+            is.read(reinterpret_cast<char*>(wg.data()), std::streamsize(sizeof(double) * n[1]));
+            hdr[0] = is ? 1.0 : 0.0;
+        }
+    }
+    par::broadcast(hdr, 2);
+    if (hdr[0] < 0.5) return false;
+    time_ = hdr[1];
+    std::fill(acc_.begin(), acc_.end(), 0.0);
+    std::fill(wacc_.begin(), wacc_.end(), 0.0);
+    if (par::master()) {
+        acc_ = g;
+        wacc_ = wg;
+    }
+    return true;
+}
+
 std::pair<scalar, scalar> SpanStatistics::write(const std::string& dir, const std::vector<scalar>& stations) const {
     std::vector<double> g = acc_, wg = wacc_;
     par::allSumInPlace(g.data(), int(g.size()));

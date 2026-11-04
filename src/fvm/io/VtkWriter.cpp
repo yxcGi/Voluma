@@ -1,5 +1,7 @@
 #include "fvm/io/VtkWriter.h"
 
+#include "fvm/io/VtkAppender.h"
+
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -14,24 +16,8 @@ VtkWriter::VtkWriter(MeshPtr mesh, std::string dir, std::string base)
     par::barrier();
 }
 
-namespace {
-struct Appender {
-    std::vector<char> data;
-    std::ostringstream xml;
-    template <class T> void array(const std::string& type, const std::string& name, int nc, const T* v, std::size_t n) {
-        xml << "<DataArray type=\"" << type << "\"";
-        if (!name.empty()) xml << " Name=\"" << name << "\"";
-        if (nc > 1) xml << " NumberOfComponents=\"" << nc << "\"";
-        xml << " format=\"appended\" offset=\"" << data.size() << "\"/>\n";
-        const std::uint64_t nb = sizeof(T) * n;
-        const char* h = reinterpret_cast<const char*>(&nb);
-        data.insert(data.end(), h, h + sizeof(nb));
-        const char* p = reinterpret_cast<const char*>(v);
-        data.insert(data.end(), p, p + nb);
-    }
-};
-const char* vtkType(int nc) { return nc == 1 ? "1" : (nc == 3 ? "3" : "9"); }
-} // namespace
+using vtkxml::Appender;
+using vtkxml::componentString;
 
 void VtkWriter::write(scalar time) {
     const Mesh& m = *mesh_;
@@ -75,7 +61,7 @@ void VtkWriter::write(scalar time) {
               "byte_order=\"LittleEndian\" header_type=\"UInt64\">\n<PUnstructuredGrid GhostLevel=\"0\">\n"
               "<PPoints><PDataArray type=\"Float64\" NumberOfComponents=\"3\"/></PPoints>\n<PCellData>\n";
         for (const auto& it : items_)
-            os << "<PDataArray type=\"Float64\" Name=\"" << it.name << "\" NumberOfComponents=\"" << vtkType(it.nc)
+            os << "<PDataArray type=\"Float64\" Name=\"" << it.name << "\" NumberOfComponents=\"" << componentString(it.nc)
                << "\"/>\n";
         os << "<PDataArray type=\"Float64\" Name=\"procId\"/>\n</PCellData>\n";
         for (int r = 0; r < par::size(); ++r) os << "<Piece Source=\"" << frame.str() << '/' << r << ".vtu\"/>\n";

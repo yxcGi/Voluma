@@ -26,6 +26,9 @@ public:
     // 写出各站位剖面与壁面分布（stations 为 x/H）；返回 {分离点, 再附点}（x/H，未找到为 −1）
     std::pair<scalar, scalar> write(const std::string& dir, const std::vector<scalar>& stations) const;
     scalar averagedTime() const { return time_; }
+    // 续算：累积量（全局归约后由 0 号写 spanStatistics.bin）；读入时 0 号持有全部累积量，其余进程清零
+    void writeRestart(const std::string& dir) const;
+    bool readRestart(const std::string& dir);
     // Cp 的参考压力（缺省为流向坐标最小的壁面组的压力）
     void setPRef(scalar p) {
         pRef_ = p;
