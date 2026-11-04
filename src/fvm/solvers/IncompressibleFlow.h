@@ -71,6 +71,7 @@ public:
     MomentumForcing forcing;
     ConvectionScheme divScheme = ConvectionScheme::parse("linear");
     GradScheme gradScheme = GradScheme::GaussLinear;
+    GradScheme gradPScheme = GradScheme::GaussLinear;  // 动量方程 / 速度修正用的 ∇p（偏斜网格默认 GaussSkew，守恒）
     DdtScheme ddtScheme = DdtScheme::Backward;
     bool laplacianNonOrthCorr = true;
 

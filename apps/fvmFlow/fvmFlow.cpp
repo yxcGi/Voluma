@@ -150,6 +150,9 @@ void runCase(const std::string& caseFile) {
     const bool skewed = mesh->meanSkewness() > 0.05;
     flow.gradScheme = parseGradScheme(sch.has("grad") ? sch["grad"].string() : (skewed ? "leastSquares" : "Gauss"));
     mesh->setGradScheme(flow.gradScheme);
+    // 压力梯度（动量方程源项与速度修正）：偏斜网格默认守恒的 GaussSkew，其余跟随 grad
+    flow.gradPScheme = sch.has("gradP") ? parseGradScheme(sch["gradP"].string()) : (skewed ? GradScheme::GaussSkew : flow.gradScheme);
+    if (!sch.has("gradP") && skewed) std::cout << "gradP scheme: GaussSkew (conservative, default for skewed mesh)\n";
     if (!sch.has("grad") && skewed)
         std::cout << "grad scheme: leastSquares (default for skewed mesh, mean skewness " << mesh->meanSkewness()
                   << ")\n";
@@ -519,6 +522,22 @@ void runCase(const std::string& caseFile) {
             if (in < 0 && out > 0) std::cout << (q[p] >= 0 ? " (backflow " : " (outflow ") << (q[p] >= 0 ? in : out) << ')';
         }
         std::cout << '\n';
+        // 压力力一致性诊断：单元梯度的体积和（最小二乘 / Gauss）对边界面压力合力 Σ p_f S_f（精确的净压力）
+        {
+            const auto gLS = fvc::grad(flow.p(), GradScheme::LeastSquares);
+            const auto gG = fvc::grad(flow.p(), GradScheme::GaussLinear);
+            double s[9] = {0, 0, 0, 0, 0, 0, 0, 0, 0};
+            for (label c = 0; c < m.nCells(); ++c)
+                for (int k = 0; k < 3; ++k) {
+                    s[k] += m.V()[c] * gLS[c][k];
+                    s[3 + k] += m.V()[c] * gG[c][k];
+                }
+            for (label f = m.nInternalFaces(); f < m.nFaces(); ++f)
+                for (int k = 0; k < 3; ++k) s[6 + k] += flow.p().bValue(f) * m.Sf()[f][k];
+            par::allSumInPlace(s, 9);
+            std::cout << "  pressure force: sum V grad(p) LS (" << s[0] << ' ' << s[1] << ' ' << s[2] << ")  Gauss (" << s[3] << ' '
+                      << s[4] << ' ' << s[5] << ")  boundary sum p_f S_f (" << s[6] << ' ' << s[7] << ' ' << s[8] << ")\n";
+        }
     };
     const bool fluxReport = run.get("printFluxes", false);
 

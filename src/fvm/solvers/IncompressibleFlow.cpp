@@ -220,7 +220,7 @@ StepInfo IncompressibleFlow::step(scalar dt) {
                 for (label f = 0; f < m.nFaces(); ++f) d[f] = phiF[f] - gpF[f];
                 ngp = fvc::reconstruct(m, d);
             } else {
-                const auto gp = fvc::grad(p_, gradScheme);
+                const auto gp = fvc::grad(p_, gradPScheme);
                 for (label c = 0; c < nT; ++c) ngp[c] = -gp[c];
             }
             M -= ngp;
@@ -259,7 +259,7 @@ StepInfo IncompressibleFlow::step(scalar dt) {
             if (m.skewed()) {
                 // 定通量边界面上 HbyA 的面值取 U_b + rAU_P ∇p_P（HbyA = U + rAU∇p，壁面处并不为零），
                 // 这样最小二乘约束 HbyA_b − HbyA_P = U_b − U_P 与速度差一致
-                const auto gpc = fvc::grad(p_, gradScheme);
+                const auto gpc = fvc::grad(p_, gradPScheme);
                 std::vector<char> bFix(m.nBoundaryFaces(), 0);
                 std::vector<Vec3> bVal(m.nBoundaryFaces(), Vec3{});
                 for (label p = 0; p < label(m.patches().size()); ++p) {
@@ -353,7 +353,7 @@ StepInfo IncompressibleFlow::step(scalar dt) {
                 const auto rec = fvc::reconstruct(m, d);
                 for (label c = 0; c < nT; ++c) U_[c] = HbyA[c] + rAU_[c] * rec[c];
             } else {
-                const auto gp = fvc::grad(p_, gradScheme);
+                const auto gp = fvc::grad(p_, gradPScheme);
                 for (label c = 0; c < nT; ++c) U_[c] = HbyA[c] - rAU_[c] * gp[c];
             }
             if (m.twoD())

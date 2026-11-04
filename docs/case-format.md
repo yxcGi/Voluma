@@ -175,7 +175,8 @@ w = 0，p 为对应的解析压力）：`"initial": { "taylorGreen": { "U0": 1, 
 | --- | --- | --- |
 | `div` | `upwind` `linear` `linearUpwind` `LUST` `limitedLinear 1` `vanLeer` `MUSCL` `minmod` | 稳态 `linearUpwind`，瞬态 `linear` |
 | `ddt` | `Euler` `backward`（二阶，支持变步长） | `backward` |
-| `grad` | `Gauss` `leastSquares` | `Gauss`；平均偏斜度 > 0.05 的网格（三角形 / 四面体）默认 `leastSquares` |
+| `grad` | `Gauss` `leastSquares` `GaussSkew` | `Gauss`；平均偏斜度 > 0.05 的网格（三角形 / 四面体）默认 `leastSquares` |
+| `gradP` | 同上 | 动量方程源项与速度修正用的 ∇p：偏斜网格默认 `GaussSkew`（Gauss 梯度 + 面值偏斜修正，体积和严格等于边界面压力合力；最小二乘梯度不守恒，四面体管流压降会偏高约 2 %），其余跟随 `grad` |
 | `laplacianNonOrthCorr` | 是否做显式非正交修正 | true |
 
 ## solution

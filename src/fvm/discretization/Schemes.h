@@ -38,10 +38,11 @@ struct ConvectionScheme {
     bool needsGradient() const { return type != Type::Upwind && type != Type::Linear; }
 };
 
-enum class GradScheme { GaussLinear, LeastSquares };
+enum class GradScheme { GaussLinear, LeastSquares, GaussSkew };
 inline GradScheme parseGradScheme(const std::string& s) {
     if (s == "Gauss linear" || s == "Gauss") return GradScheme::GaussLinear;
     if (s == "leastSquares") return GradScheme::LeastSquares;
+    if (s == "GaussSkew" || s == "Gauss skewCorrected") return GradScheme::GaussSkew;
     throw std::runtime_error("unknown gradient scheme: " + s);
 }
 

@@ -103,10 +103,10 @@ if(Python3_Interpreter_FOUND)
   # 三维四面体网格算例（cases/pipeTet、cases/squareDuct，Gmsh 四面体，见 docs/validation.md）
   add_test(NAME case_tet_pipe COMMAND ${FVM_CHECK} --case ${CMAKE_SOURCE_DIR}/cases/pipeTet/case.json
            --workdir ${CMAKE_BINARY_DIR}/cases/pipeTet ${FVM_MPI_ARGS}
-           -- ${CMAKE_SOURCE_DIR}/tools/compare_pipe.py OUTPUT --axis 2 --tol 1.5 --nu 0.05 --dpdx-tol 4)
+           -- ${CMAKE_SOURCE_DIR}/tools/compare_pipe.py OUTPUT --axis 2 --tol 1.5 --nu 0.05 --dpdx-tol 1)
   add_test(NAME case_tet_squareDuct COMMAND ${FVM_CHECK} --case ${CMAKE_SOURCE_DIR}/cases/squareDuct/case.json
            --workdir ${CMAKE_BINARY_DIR}/cases/squareDuct ${FVM_MPI_ARGS}
-           -- ${CMAKE_SOURCE_DIR}/tools/compare_duct.py OUTPUT --tol 0.02 --check --nu 0.05 --dpdx-tol 4)
+           -- ${CMAKE_SOURCE_DIR}/tools/compare_duct.py OUTPUT --tol 0.02 --check --nu 0.05 --dpdx-tol 1)
   # 斜向顶盖三维方腔 Re 1000（Feldman & Gelfgat 2010 中线数据）：六面体 33³ 贴壁加密与 6 万四面体均为粗网格回归，
   # 容差按各自粗网格偏差上限设置；精细网格结果见 docs/validation.md 六
   add_test(NAME case_cavity3D_diag_hex COMMAND ${FVM_CHECK} --case ${CMAKE_SOURCE_DIR}/cases/cavity3D/diag_hex33.json

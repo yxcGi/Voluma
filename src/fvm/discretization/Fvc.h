@@ -223,6 +223,42 @@ std::vector<typename Traits<T>::Grad> grad(const VolField<T>& f, GradScheme sche
         }
         for (label i = nI; i < m.nFaces(); ++i) g[own[i]] += outerSf(m.Sf()[i], f.bValue(i));
         for (label c = 0; c < nC; ++c) g[c] = g[c] * (1.0 / m.V()[c]);
+    } else if (scheme == GradScheme::GaussSkew) {
+        // 守恒的 Gauss 梯度 + 偏斜修正：面值 φ_f = 线性插值 + (x_f − x'_f)·∇φ_f（∇φ 取最小二乘），
+        // 梯度类边界面取 φ_P + ∇φ_t·d_t + g_b (n·d)（切向按单元梯度外推，法向按边界条件给的梯度）。
+        // 面值由相邻两单元共享，体积和严格等于边界面合力 Σ φ_f S_f；最小二乘梯度不守恒，在四面体网格上
+        // 其体积和比边界合力小约 2 %，用于动量方程的压力梯度时管流压降偏高同样的比例（docs/validation.md 六）。
+        const auto gls = grad(f, GradScheme::LeastSquares);
+        const auto& w = m.w();
+        const auto& sk = m.skewVecs();
+        for (label i = 0; i < nI; ++i) {
+            const T phif = w[i] * f[own[i]] + (1.0 - w[i]) * f[nei[i]] +
+                           gradDot(sk[i], w[i] * gls[own[i]] + (1.0 - w[i]) * gls[nei[i]]);
+            const G c = outerSf(m.Sf()[i], phif);
+            g[own[i]] += c;
+            g[nei[i]] -= c;
+        }
+        for (label p = 0; p < label(m.patches().size()); ++p) {
+            const Patch& pt = m.patches()[p];
+            const auto& bc = f.bc(p);
+            const bool value = bc.fixesValue();
+            for (label k = 0; k < pt.size; ++k) {
+                const label i = pt.start + k;
+                T phif;
+                if (value) {
+                    phif = f.bValue(i);
+                } else {
+                    const Vec3& d = m.d()[i];
+                    const Vec3 n = m.Sf()[i] * (1.0 / m.magSf()[i]);
+                    const scalar nd = dot(n, d);
+                    const Vec3 dt = d - n * nd;
+                    const T gb = detail::cmptMulT(bc.gradientInternalCoeff(f, k), f[own[i]]) + bc.gradientBoundaryCoeff(f, k);
+                    phif = f[own[i]] + gradDot(dt, gls[own[i]]) + gb * nd;
+                }
+                g[own[i]] += outerSf(m.Sf()[i], phif);
+            }
+        }
+        for (label c = 0; c < nC; ++c) g[c] = g[c] * (1.0 / m.V()[c]);
     } else {
         // 加权最小二乘：Σ w d⊗d，权重 1/|d|²。
         // 边界面：定值类条件用面心值与 d（φ_b − φ_P = ∇φ·d）；梯度类/混合类条件（面值由单元值外推，不是面心处的真实值）
