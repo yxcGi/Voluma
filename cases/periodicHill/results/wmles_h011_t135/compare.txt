@@ -1,0 +1,12 @@
+/tmp/claude-0/-home-user/5ad8e80b-23d3-597f-9ad2-ce5d81172ca0/scratchpad/auto/hill_wmles/output/hill: separation x/h 0.5796819340053796, reattachment x/h 2.145808085755163  (LES literature: ~0.2 / 4.56-4.72)
+  x/h 0.05: rms(u - u_exp)/U_b = 0.176
+  x/h  0.5: rms(u - u_exp)/U_b = 0.201
+  x/h    1: rms(u - u_exp)/U_b = 0.201
+  x/h    2: rms(u - u_exp)/U_b = 0.222
+  x/h    3: rms(u - u_exp)/U_b = 0.233
+  x/h    4: rms(u - u_exp)/U_b = 0.220
+  x/h    5: rms(u - u_exp)/U_b = 0.195
+  x/h    6: rms(u - u_exp)/U_b = 0.165
+  x/h    7: rms(u - u_exp)/U_b = 0.132
+  x/h    8: rms(u - u_exp)/U_b = 0.112
+  mean rms over stations: 0.186
