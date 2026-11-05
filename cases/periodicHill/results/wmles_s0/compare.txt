@@ -1,0 +1,12 @@
+/tmp/claude-0/-home-user/5ad8e80b-23d3-597f-9ad2-ce5d81172ca0/scratchpad/auto/hill_s0/output/hill: separation x/h 0.5139929049092207, reattachment x/h 2.739894867474005  (LES literature: ~0.2 / 4.56-4.72)
+  x/h 0.05: rms(u - u_exp)/U_b = 0.145
+  x/h  0.5: rms(u - u_exp)/U_b = 0.157
+  x/h    1: rms(u - u_exp)/U_b = 0.146
+  x/h    2: rms(u - u_exp)/U_b = 0.162
+  x/h    3: rms(u - u_exp)/U_b = 0.167
+  x/h    4: rms(u - u_exp)/U_b = 0.164
+  x/h    5: rms(u - u_exp)/U_b = 0.149
+  x/h    6: rms(u - u_exp)/U_b = 0.125
+  x/h    7: rms(u - u_exp)/U_b = 0.100
+  x/h    8: rms(u - u_exp)/U_b = 0.083
+  mean rms over stations: 0.140
